@@ -4,7 +4,8 @@ import { computeDesign, type DesignResult } from "./lib/design";
 import { SHEET_SIZES, packMixedSheet, type SheetSize } from "./lib/sheet";
 import { buildSingleStickerSVG, buildSheetSVG, type RenderOptions, type SheetItem } from "./lib/svgBuilder";
 import { REGMARK_CLEARANCE_MM } from "./lib/regmarks";
-import { downloadSvgString, exportSvgStringAsPdf } from "./lib/pdfExport";
+import { downloadSvgString } from "./lib/download";
+import { printSvg } from "./lib/print";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
@@ -113,7 +114,7 @@ const tabs = Array.from(document.querySelectorAll(".tab")) as HTMLButtonElement[
 const sheetCountBadge = document.getElementById("sheetCount") as HTMLSpanElement;
 const summaryEl = document.getElementById("summary") as HTMLDivElement;
 const downloadSvgBtn = document.getElementById("downloadSvgBtn") as HTMLButtonElement;
-const downloadPdfBtn = document.getElementById("downloadPdfBtn") as HTMLButtonElement;
+const printBtn = document.getElementById("printBtn") as HTMLButtonElement;
 
 const zoomOutBtn = document.getElementById("zoomOutBtn") as HTMLButtonElement;
 const zoomInBtn = document.getElementById("zoomInBtn") as HTMLButtonElement;
@@ -269,7 +270,7 @@ function render() {
   sheetCountBadge.textContent = String(placements.length);
 
   downloadSvgBtn.disabled = !hasImages;
-  downloadPdfBtn.disabled = !hasImages;
+  printBtn.disabled = !hasImages;
 
   if (!hasImages) {
     summaryEl.textContent = "Upload an image to begin";
@@ -842,22 +843,15 @@ downloadSvgBtn.addEventListener("click", () => {
   }
 });
 
-downloadPdfBtn.addEventListener("click", async () => {
-  downloadPdfBtn.disabled = true;
-  try {
-    const sheet = currentSheet();
-    if (state.activeTab === "design") {
-      const sel = selectedDesign();
-      if (!sel?.design) return;
-      const svg = buildSingleStickerSVG(sel.design, renderOptionsFor(sel));
-      await exportSvgStringAsPdf(svg, sel.design.actualWmm, sel.design.actualHmm, `${baseName()}-cut.pdf`);
-    } else {
-      const { items } = computeSheetItems(sheet);
-      const svg = buildSheetSVG(items, sheet, currentRegmarkStyle());
-      await exportSvgStringAsPdf(svg, sheet.widthMm, sheet.heightMm, `stickers-sheet.pdf`);
-    }
-  } finally {
-    downloadPdfBtn.disabled = false;
+printBtn.addEventListener("click", () => {
+  const sheet = currentSheet();
+  if (state.activeTab === "design") {
+    const sel = selectedDesign();
+    if (!sel?.design) return;
+    printSvg(buildSingleStickerSVG(sel.design, renderOptionsFor(sel)));
+  } else {
+    const { items } = computeSheetItems(sheet);
+    printSvg(buildSheetSVG(items, sheet, currentRegmarkStyle()));
   }
 });
 

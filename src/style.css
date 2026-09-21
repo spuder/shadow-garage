@@ -557,3 +557,22 @@ select {
 .export-buttons button {
   flex: 1;
 }
+
+#printArea {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 0;
+  }
+  body > *:not(#printArea) {
+    display: none !important;
+  }
+  #printArea {
+    display: block !important;
+  }
+  #printArea svg {
+    display: block;
+  }
+}

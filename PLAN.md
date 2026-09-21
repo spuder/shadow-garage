@@ -157,6 +157,19 @@ as there's one design, not two — so the `+` tile is visible immediately after 
 upload, not only once a second one already exists. Also reworded the dropzone's hint text to
 mention selecting/dropping several files at once.
 
+## 2f. Print replaces Download PDF — done
+
+Swapped "Download PDF" for a **Print** button that opens the browser's native print dialog
+directly (`window.print()`), positioned to the *left* of Download SVG since it's now the more
+common action. New `src/lib/print.ts` swaps the export-quality SVG (real mm width/height, same
+one `buildSingleStickerSVG`/`buildSheetSVG` already produce) into a dedicated `#printArea` node;
+new `@media print` CSS in `style.css` hides everything else on the page (`body > *:not(#printArea)`)
+so only that SVG prints, at `@page { margin: 0 }`. No new library needed — the browser's own print
+pipeline handles the mm-to-physical-size conversion, the same way it already does when a page
+declares `width="Xmm"` on an SVG. This let us **drop jsPDF and svg2pdf.js entirely**
+(`src/lib/pdfExport.ts` → `src/lib/download.ts`, now just `downloadSvgString`), which incidentally
+cut the production bundle from ~511KB to ~24KB.
+
 **Known environment caveat, not a code issue**: in the sandboxed preview browser used during
 this session, blob-based file downloads (`<a download>` + `URL.createObjectURL`) intermittently
 stopped landing on disk partway through testing — reproduced even with a trivial 10-byte test
