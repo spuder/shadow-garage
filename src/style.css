@@ -294,6 +294,19 @@ html, body {
 .thumb.active {
   border-color: var(--accent);
 }
+.thumb-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  color: var(--text-muted);
+  font-size: 22px;
+  line-height: 1;
+}
+.thumb-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .thumb-remove {
   position: absolute;
   top: -6px;

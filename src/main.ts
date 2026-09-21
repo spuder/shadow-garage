@@ -37,6 +37,7 @@ interface AppState {
   gapMm: number;
   sheetMarginMm: number;
   regmarksEnabled: boolean;
+  regmarkStyle: "standard" | "four_corner";
   designs: StickerDesign[];
   selectedDesignId: string | null;
   activeTab: Tab;
@@ -56,7 +57,8 @@ const state: AppState = {
   marginMm: 1,
   gapMm: 4,
   sheetMarginMm: 8,
-  regmarksEnabled: false,
+  regmarksEnabled: true,
+  regmarkStyle: "standard",
   designs: [],
   selectedDesignId: null,
   activeTab: "design",
@@ -105,6 +107,7 @@ const gapValue = document.getElementById("gapValue") as HTMLSpanElement;
 
 const fillModeToggle = document.getElementById("fillModeToggle") as HTMLDivElement;
 const regmarksToggle = document.getElementById("regmarksToggle") as HTMLInputElement;
+const regmarkStyleToggle = document.getElementById("regmarkStyleToggle") as HTMLDivElement;
 
 const tabs = Array.from(document.querySelectorAll(".tab")) as HTMLButtonElement[];
 const sheetCountBadge = document.getElementById("sheetCount") as HTMLSpanElement;
@@ -167,6 +170,10 @@ function currentPaperType() {
 
 function currentSheet(): SheetSize {
   return SHEET_SIZES[state.sheetIndex];
+}
+
+function currentRegmarkStyle(): false | "standard" | "four_corner" {
+  return state.regmarksEnabled ? state.regmarkStyle : false;
 }
 
 function selectedDesign(): StickerDesign | null {
@@ -237,13 +244,17 @@ function render() {
   fillModeToggle.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("active", (b as HTMLButtonElement).dataset.mode === state.fillMode);
   });
+  regmarksToggle.checked = state.regmarksEnabled;
+  regmarkStyleToggle.querySelectorAll("button").forEach((b) => {
+    b.classList.toggle("active", (b as HTMLButtonElement).dataset.style === state.regmarkStyle);
+  });
 
   const hasImages = state.designs.length > 0;
   dropzone.style.display = hasImages ? "none" : "flex";
   imageBlock.hidden = !hasImages;
   sizeBlock.hidden = !hasImages;
   zoomControls.hidden = !hasImages;
-  thumbStrip.hidden = state.designs.length < 2;
+  thumbStrip.hidden = state.designs.length < 1;
   removeImageBtn.disabled = !hasImages;
 
   const sel = selectedDesign();
@@ -276,7 +287,7 @@ function render() {
     summaryEl.textContent = `${fmtIn(sel.design.actualWmm)} × ${fmtIn(sel.design.actualHmm)} in`;
   } else if (state.activeTab === "sheet") {
     if (state.needsRefit) refitCamera(sheet.widthMm, sheet.heightMm);
-    viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheet, state.regmarksEnabled ? "standard" : false));
+    viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheet, currentRegmarkStyle()));
     applyCameraTransform();
     if (state.editingSelected && sel) {
       const match = placements.find((p) => p.id === sel.id);
@@ -316,6 +327,13 @@ function renderThumbStrip() {
     thumb.appendChild(removeBtn);
     thumbStrip.appendChild(thumb);
   });
+
+  const addTile = document.createElement("button");
+  addTile.className = "thumb thumb-add";
+  addTile.title = "Add more stickers";
+  addTile.textContent = "+";
+  addTile.addEventListener("click", () => fileInput.click());
+  thumbStrip.appendChild(addTile);
 }
 
 // ---- size fields (width/height text boxes + aspect lock) ----
@@ -663,7 +681,7 @@ function startResize(e: PointerEvent, design: StickerDesign, hd: (typeof HANDLE_
           return { design: d.design, x: p.x, y: p.y, opts: renderOptionsFor(d) } as SheetItem;
         })
         .filter((x): x is SheetItem => x !== null);
-      viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheetAtStart, state.regmarksEnabled ? "standard" : false));
+      viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheetAtStart, currentRegmarkStyle()));
     }
     applyCameraTransform();
     renderOverlay(design);
@@ -788,6 +806,13 @@ regmarksToggle.addEventListener("change", () => {
   recompute();
 });
 
+regmarkStyleToggle.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest("button[data-style]") as HTMLButtonElement | null;
+  if (!btn) return;
+  state.regmarkStyle = btn.dataset.style as "standard" | "four_corner";
+  recompute();
+});
+
 // ---- tabs ----
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
@@ -813,7 +838,7 @@ downloadSvgBtn.addEventListener("click", () => {
     downloadSvgString(buildSingleStickerSVG(sel.design, renderOptionsFor(sel)), `${baseName()}-cut.svg`);
   } else {
     const { items } = computeSheetItems(sheet);
-    downloadSvgString(buildSheetSVG(items, sheet, state.regmarksEnabled ? "standard" : false), `stickers-sheet.svg`);
+    downloadSvgString(buildSheetSVG(items, sheet, currentRegmarkStyle()), `stickers-sheet.svg`);
   }
 });
 
@@ -828,7 +853,7 @@ downloadPdfBtn.addEventListener("click", async () => {
       await exportSvgStringAsPdf(svg, sel.design.actualWmm, sel.design.actualHmm, `${baseName()}-cut.pdf`);
     } else {
       const { items } = computeSheetItems(sheet);
-      const svg = buildSheetSVG(items, sheet, state.regmarksEnabled ? "standard" : false);
+      const svg = buildSheetSVG(items, sheet, currentRegmarkStyle());
       await exportSvgStringAsPdf(svg, sheet.widthMm, sheet.heightMm, `stickers-sheet.pdf`);
     }
   } finally {

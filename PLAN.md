@@ -124,19 +124,38 @@ Reverse-engineered from
 geometry: a solid 5×5mm black square top-left, plus L-shaped brackets (two line segments, 20mm
 arms, **0.3mm stroke** — the upstream code cites real-world testing that thicker marks measurably
 hurt optical registration accuracy) top-right and bottom-left, all offset 10mm from the sheet
-edges. A `fourCorner` variant (L-bracket at all four corners instead of a plain square top-left)
-exists in the module but isn't exposed in the UI yet.
+edges. **Defaults to on.**
 
-- New "Registration Marks" panel block with a single checkbox (sheet-only; a no-op on the Design
-  tab, which has no page/margin concept). Wired through `buildSheetSVG`'s new optional third
-  argument rather than baked into `svgBuilder.ts` unconditionally.
+- New "Registration Marks" panel block: an enable checkbox plus a Standard/Four-corner style
+  segmented control (sheet-only; a no-op on the Design tab, which has no page/margin concept).
+  Wired through `buildSheetSVG`'s new optional third argument rather than baked into
+  `svgBuilder.ts` unconditionally.
 - **Automatic clearance**: enabling it raises the effective sheet-edge packing margin to at least
   `REGMARK_CLEARANCE_MM` (origin + arm length = 30mm) via a new `effectiveSheetMarginMm()` helper,
-  so stickers can never be packed into the marks' zone and obscure them — a real constraint, not
-  just the upstream tool's visual-only white "safe area" hint.
+  so stickers can never be packed into the marks' zone and obscure them. This is a real, enforced
+  constraint — checked against the upstream project's own code (`Graphtec.py`'s `clip_point`/
+  `enable_sw_clipping`) and confirmed that library does *not* do this: its "safe area" is a plain
+  white-filled shape for the human designer's benefit inside Inkscape, not something the cutting
+  pipeline itself checks.
+- **Per-model reality check**: also confirmed against `Graphtec.py`'s per-device hardware table
+  that registration marks are *not* identical across Silhouette models. Nearly every model that
+  supports registration at all uses the standard 3-mark style; only three set `quadregmarks: True`
+  — **Cameo Pro MK-II, Cameo 5 Alpha, Cameo 5 Alpha Plus** — and four-corner mode isn't purely
+  additive for them: the library also swaps the top-left mark from a solid square to an L-bracket
+  in that mode, so it's specifically for those three, not a strict superset of standard. Exposed
+  as an explicit style choice for that reason, defaulting to the broadly-compatible standard.
 - Refactored the three near-identical "pack + resolve to SheetItem[]" blocks (`render()`, both
   export handlers) into one `computeSheetItems()` helper while making this change, since regmarks
   needed to plug into all of them consistently.
+
+## 2e. Multi-add discoverability — done
+
+Multi-image upload already worked (the file input has `multiple`, drag-drop already handled a
+`FileList`) but wasn't obvious before the first upload. Added a dashed `+` tile at the end of the
+thumbnail filmstrip (a familiar "add more" pattern) and made the filmstrip itself appear as soon
+as there's one design, not two — so the `+` tile is visible immediately after the very first
+upload, not only once a second one already exists. Also reworded the dropzone's hint text to
+mention selecting/dropping several files at once.
 
 **Known environment caveat, not a code issue**: in the sandboxed preview browser used during
 this session, blob-based file downloads (`<a download>` + `URL.createObjectURL`) intermittently

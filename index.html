@@ -28,7 +28,7 @@
             <div id="dropzone" class="dropzone">
               <div class="dropzone-icon">&#8593;</div>
               <div class="dropzone-text">Click or drop images here</div>
-              <div class="dropzone-sub">PNG, JPEG, or SVG — transparency works best</div>
+              <div class="dropzone-sub">PNG, JPEG, or SVG — select or drop several at once</div>
             </div>
             <div id="viewportInner" class="viewport-inner"></div>
             <div id="overlayLayer" class="overlay-layer"></div>
@@ -107,10 +107,14 @@
             <div class="panel-block">
               <div class="block-title">Registration Marks</div>
               <label class="checkbox-row">
-                <input id="regmarksToggle" type="checkbox" />
+                <input id="regmarksToggle" type="checkbox" checked />
                 Add print-and-cut alignment marks
               </label>
-              <div class="hint-text">For optical registration on a Silhouette-style cutter. Sheet-only; sticker placement automatically keeps clear of the marks.</div>
+              <div class="segmented" id="regmarkStyleToggle" style="margin-top: 10px;">
+                <button data-style="standard" class="active">Standard (3-mark)</button>
+                <button data-style="four_corner">Four-corner</button>
+              </div>
+              <div class="hint-text">Sheet-only; sticker placement automatically keeps clear of the marks. Standard works on virtually every Silhouette model; four-corner is only for the Cameo Pro MK-II, Cameo 5 Alpha, and Cameo 5 Alpha Plus.</div>
             </div>
           </div>
 
