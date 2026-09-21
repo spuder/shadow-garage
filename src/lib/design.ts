@@ -29,7 +29,8 @@ export function computeDesign(
   targetHmm: number,
   marginMm: number,
   preserveAspect = true,
-  driveBy: "width" | "height" = "width"
+  driveBy: "width" | "height" = "width",
+  preserveSharpCorners = true
 ): DesignResult {
   const rawW = raw.rawBBox.maxX - raw.rawBBox.minX;
   const rawH = raw.rawBBox.maxY - raw.rawBBox.minY;
@@ -50,7 +51,7 @@ export function computeDesign(
   const scale = driveWidth ? Math.max(0.1, targetWmm - 2 * safeMarginMm) / rawW : Math.max(0.1, targetHmm - 2 * safeMarginMm) / rawH;
   const marginPx = safeMarginMm / scale;
 
-  const { contours, bbox } = computeCutPath(raw, marginPx);
+  const { contours, bbox } = computeCutPath(raw, marginPx, undefined, preserveSharpCorners);
 
   // Move dilated-contour space so its bbox starts at (0,0), then scale to mm.
   let cutMM = translateContours(contours, -bbox.minX, -bbox.minY);

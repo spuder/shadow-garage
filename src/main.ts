@@ -35,6 +35,7 @@ interface AppState {
   sheetIndex: number;
   fillMode: FillMode;
   marginMm: number;
+  preserveSharpCorners: boolean;
   gapMm: number;
   sheetMarginMm: number;
   regmarksEnabled: boolean;
@@ -56,6 +57,7 @@ const state: AppState = {
   sheetIndex: 0,
   fillMode: "single",
   marginMm: 1,
+  preserveSharpCorners: false,
   gapMm: 4,
   sheetMarginMm: 8,
   regmarksEnabled: true,
@@ -103,6 +105,7 @@ const sheetSelect = document.getElementById("sheetSelect") as HTMLSelectElement;
 
 const marginSlider = document.getElementById("marginSlider") as HTMLInputElement;
 const marginValue = document.getElementById("marginValue") as HTMLSpanElement;
+const sharpCornersToggle = document.getElementById("sharpCornersToggle") as HTMLInputElement;
 const gapInput = document.getElementById("gapInput") as HTMLInputElement;
 const gapValue = document.getElementById("gapValue") as HTMLSpanElement;
 
@@ -227,7 +230,7 @@ function computeSheetItems(sheet: SheetSize): { placements: { id: string; x: num
 function recompute() {
   const margin = state.marginMm;
   for (const d of state.designs) {
-    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, margin, d.aspectLocked, d.driveBy);
+    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, margin, d.aspectLocked, d.driveBy, state.preserveSharpCorners);
     // Keep the stored target in sync with what was actually achieved, so the next edit (a drag,
     // another text-box change) starts from reality instead of a stale/approximate guess.
     d.widthMm = d.design.actualWmm;
@@ -240,6 +243,7 @@ function recompute() {
 function render() {
   // paper/sheet/margin/gap/fillMode control mirrors
   marginValue.textContent = state.marginMm.toFixed(1);
+  sharpCornersToggle.checked = state.preserveSharpCorners;
   gapValue.textContent = state.gapMm.toFixed(1);
   sheetSelect.value = String(state.sheetIndex);
   fillModeToggle.querySelectorAll("button").forEach((b) => {
@@ -668,7 +672,7 @@ function startResize(e: PointerEvent, design: StickerDesign, hd: (typeof HANDLE_
 
     design.widthMm = newW;
     design.heightMm = newH;
-    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, state.marginMm);
+    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, state.marginMm, true, "width", state.preserveSharpCorners);
 
     // Live feedback: redraw in place without re-packing the sheet (positions would otherwise
     // jump around mid-drag as siblings reflow) — the real repack happens once on release.
@@ -787,6 +791,11 @@ sheetSelect.addEventListener("change", () => {
 
 marginSlider.addEventListener("input", () => {
   state.marginMm = parseFloat(marginSlider.value);
+  recompute();
+});
+
+sharpCornersToggle.addEventListener("change", () => {
+  state.preserveSharpCorners = sharpCornersToggle.checked;
   recompute();
 });
 

@@ -170,6 +170,34 @@ declares `width="Xmm"` on an SVG. This let us **drop jsPDF and svg2pdf.js entire
 (`src/lib/pdfExport.ts` → `src/lib/download.ts`, now just `downloadSvgString`), which incidentally
 cut the production bundle from ~511KB to ~24KB.
 
+## 2g. Preserve sharp corners (opt-in) — done
+
+Added a "Preserve sharp corners" toggle (Offset Margin block), **defaulting off**. Root-caused
+that corner rounding wasn't (only) coming from Chaikin smoothing — the margin/merge dilation
+itself uses a circular (Euclidean chamfer) structuring element, and dilating *any* shape with a
+disk mathematically rounds convex corners by ~the dilation radius; no amount of smoothing
+afterward can undo that. Fixed at the actual source: `dilateMask` in `trace.ts` takes a new
+`chebyshev` flag that switches the two-pass distance transform to Chebyshev/chessboard distance
+(diagonal steps cost the same as orthogonal ones) — the raster equivalent of a miter join instead
+of a round one, which keeps right-angle corners exactly sharp. Paired with a new
+`chaikinSmoothPreserveCorners` in the same file, which classifies each vertex's turn angle once
+(≥60° = sharp) on the pre-smoothing polygon and carries protected vertices through every Chaikin
+iteration unchanged, so genuine corners survive the smoothing pass too.
+
+**This is a real trade-off, not a strict improvement — confirmed by testing, not assumed.**
+Square/Chebyshev dilation is exactly right for a geometric icon with real right angles (verified:
+a nested-square test icon went from visibly rounded to a crisp 90°, toggle-for-toggle, at the
+same 5mm margin). But dilating a *curved* boundary (any rounded letterform, i.e. ordinary text)
+with a square structuring element doesn't produce a smooth bulge — it faceting/staircases the
+curve, since square dilation is a poor approximation of "offset by r" for anything that isn't
+already rectilinear. Verified this regression directly on the wordmark test asset before deciding
+the default: with the toggle on, its smooth outline became visibly jagged. That's why default is
+off (unchanged, smooth-by-default behavior) with the toggle as an explicit per-design opt-in, and
+why the hint text says plainly it's for geometric logos/icons, not curvy or text-heavy artwork.
+`computeCutPath`/`computeDesign` both take the new flag as their last parameter, threaded through
+from a single `state.preserveSharpCorners` (global, like margin) into `recompute()` and the
+corner-drag live-preview path in `main.ts`.
+
 **Known environment caveat, not a code issue**: in the sandboxed preview browser used during
 this session, blob-based file downloads (`<a download>` + `URL.createObjectURL`) intermittently
 stopped landing on disk partway through testing — reproduced even with a trivial 10-byte test

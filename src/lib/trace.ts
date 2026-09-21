@@ -54,8 +54,17 @@ export function extractAlphaMask(img: HTMLImageElement | HTMLCanvasElement, mask
   return { data, width, height, rawBBox: { minX, minY, maxX: maxX + 1, maxY: maxY + 1 } };
 }
 
-/** Two-pass chamfer distance transform: expands `mask` by ~`radiusPx` (Euclidean-ish, good enough for smoothing/merging). */
-export function dilateMask(mask: Uint8Array, width: number, height: number, radiusPx: number): Uint8Array {
+/**
+ * Two-pass distance-transform dilation: expands `mask` by ~`radiusPx`.
+ *
+ * Dilating with a *disk* (the default, Euclidean-ish chamfer distance) mathematically rounds
+ * every convex corner with radius ~`radiusPx` — that's just what a round offset does, no amount
+ * of smoothing afterward can undo it. `chebyshev: true` dilates with a square structuring element
+ * instead (diagonal steps cost the same as orthogonal ones), which is the raster equivalent of a
+ * miter join: it keeps right-angle corners sharp. Non-axis-aligned corners are still squared off
+ * somewhat rather than perfectly mitered, but it's far closer to "sharp" than the disk version.
+ */
+export function dilateMask(mask: Uint8Array, width: number, height: number, radiusPx: number, chebyshev = false): Uint8Array {
   if (radiusPx <= 0.01) return mask;
   const INF = 1e9;
   const dist = new Float32Array(width * height);
@@ -64,7 +73,7 @@ export function dilateMask(mask: Uint8Array, width: number, height: number, radi
   const at = (x: number, y: number) => (x < 0 || y < 0 || x >= width || y >= height ? INF : dist[y * width + x]);
 
   const D1 = 1;
-  const D2 = Math.SQRT2;
+  const D2 = chebyshev ? 1 : Math.SQRT2;
 
   // forward pass
   for (let y = 0; y < height; y++) {
@@ -205,18 +214,68 @@ function chaikinSmooth(points: Contour, iterations: number): Contour {
   return pts;
 }
 
+/** Interior turn angle at `cur`, in degrees: 0 = dead straight, 90 = a right-angle corner, 180 = a full reversal. */
+function turnAngleDeg(prev: Point, cur: Point, next: Point): number {
+  const v1x = cur[0] - prev[0], v1y = cur[1] - prev[1];
+  const v2x = next[0] - cur[0], v2y = next[1] - cur[1];
+  const len1 = Math.hypot(v1x, v1y), len2 = Math.hypot(v2x, v2y);
+  if (len1 < 1e-9 || len2 < 1e-9) return 0;
+  const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (len1 * len2)));
+  return (Math.acos(cos) * 180) / Math.PI;
+}
+
+/**
+ * Chaikin smoothing that leaves genuinely sharp corners alone. Vertices are classified as
+ * "sharp" once, up front, from the input polygon's own turn angles — a vertex turning by more
+ * than `sharpAngleDeg` (e.g. a square icon's ~90° corners) is treated as an intentional corner
+ * and carried through every iteration unchanged, while every other vertex gets Chaikin-cut as
+ * usual. This is what separates deliberate right angles from the residual jaggies of a
+ * raster-traced pixel staircase (which, after Douglas-Peucker simplification, are typically much
+ * shallower than a real corner).
+ */
+function chaikinSmoothPreserveCorners(points: Contour, iterations: number, sharpAngleDeg = 60): Contour {
+  const n0 = points.length;
+  if (n0 < 3) return points;
+  let pts = points;
+  let sharp = points.map((p, i) => turnAngleDeg(points[(i - 1 + n0) % n0], p, points[(i + 1) % n0]) >= sharpAngleDeg);
+
+  for (let it = 0; it < iterations; it++) {
+    const n = pts.length;
+    if (n < 3) break;
+    const nextPts: Point[] = [];
+    const nextSharp: boolean[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[(i - 1 + n) % n];
+      const b = pts[i];
+      const c = pts[(i + 1) % n];
+      if (sharp[i]) {
+        nextPts.push(b);
+        nextSharp.push(true);
+      } else {
+        nextPts.push([0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]]);
+        nextSharp.push(false);
+        nextPts.push([0.75 * b[0] + 0.25 * c[0], 0.75 * b[1] + 0.25 * c[1]]);
+        nextSharp.push(false);
+      }
+    }
+    pts = nextPts;
+    sharp = nextSharp;
+  }
+  return pts;
+}
+
 export interface CutPathResult {
   contours: Contour[]; // in mask px space, smoothed, one closed contour per connected blob
   bbox: { minX: number; minY: number; maxX: number; maxY: number };
 }
 
 /** Full pipeline: dilate the raw mask by `marginPx`, find blobs, trace + smooth each into a clean polygon. */
-export function computeCutPath(raw: RawMask, marginPx: number, minAreaPx = 9): CutPathResult {
+export function computeCutPath(raw: RawMask, marginPx: number, minAreaPx = 9, preserveSharpCorners = true): CutPathResult {
   // Defensive clamp: never dilate further than the mask canvas has room for, regardless of
   // how it was constructed — avoids a hard-clipped/flattened outline if a caller ever requests
   // a radius larger than the available padding.
   const safeRadiusPx = Math.min(marginPx, Math.min(raw.width, raw.height) * 0.4);
-  const dilated = dilateMask(raw.data, raw.width, raw.height, safeRadiusPx);
+  const dilated = dilateMask(raw.data, raw.width, raw.height, safeRadiusPx, preserveSharpCorners);
   const components = findComponents(dilated, raw.width, raw.height, minAreaPx);
 
   const contours: Contour[] = [];
@@ -224,7 +283,7 @@ export function computeCutPath(raw: RawMask, marginPx: number, minAreaPx = 9): C
     let poly = traceBoundary(dilated, raw.width, raw.height, comp.startX, comp.startY);
     if (poly.length < 3) continue;
     poly = simplify(poly, 0.75);
-    poly = chaikinSmooth(poly, 2);
+    poly = preserveSharpCorners ? chaikinSmoothPreserveCorners(poly, 2) : chaikinSmooth(poly, 2);
     poly = simplify(poly, 0.4);
     // normalize winding so all contours share the same orientation
     if (signedArea(poly) < 0) poly.reverse();
