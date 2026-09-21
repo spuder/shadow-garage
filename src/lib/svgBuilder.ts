@@ -1,5 +1,6 @@
 import type { DesignResult } from "./design";
 import { contoursToPathD, translateContours } from "./geometry";
+import { buildRegmarksSVG } from "./regmarks";
 import type { SheetSize } from "./sheet";
 
 export const CUT_LINE_COLOR = "#ff0000";
@@ -51,7 +52,7 @@ export interface SheetItem {
 }
 
 /** Full-sheet SVG placing each item (possibly different designs) at its packed position. Used for Sheet Preview + sheet export. */
-export function buildSheetSVG(items: SheetItem[], sheet: SheetSize): string {
+export function buildSheetSVG(items: SheetItem[], sheet: SheetSize, regmarks: false | "standard" | "four_corner" = false): string {
   const prints: string[] = [];
   const cuts: string[] = [];
   items.forEach((item, i) => {
@@ -64,6 +65,7 @@ export function buildSheetSVG(items: SheetItem[], sheet: SheetSize): string {
     `<rect x="0" y="0" width="${sheet.widthMm}" height="${sheet.heightMm}" fill="white"/>`,
     `<g id="print">${prints.join("")}</g>`,
     `<g id="cutlines">${cuts.join("")}</g>`,
+    regmarks ? buildRegmarksSVG(sheet.widthMm, sheet.heightMm, regmarks === "four_corner") : "",
     `</svg>`,
   ].join("");
 }

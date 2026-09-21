@@ -116,6 +116,28 @@ resize, zoom/pan, multi-design, fill-sheet, both themes):
   that intentionally passes mismatched W/H to get a stretch. Fields skip re-syncing their value
   while the user has that specific field focused, so typing doesn't fight with the live re-render.
 
+## 2d. Registration marks (print-and-cut optical alignment) — done
+
+Reverse-engineered from
+[fablabnbg/inkscape-silhouette's `render_silhouette_regmarks.py`](https://github.com/fablabnbg/inkscape-silhouette/blob/main/render_silhouette_regmarks.py)
+(GPL-2.0 — studied for the spec, not vendored). New `src/lib/regmarks.ts` reproduces its exact
+geometry: a solid 5×5mm black square top-left, plus L-shaped brackets (two line segments, 20mm
+arms, **0.3mm stroke** — the upstream code cites real-world testing that thicker marks measurably
+hurt optical registration accuracy) top-right and bottom-left, all offset 10mm from the sheet
+edges. A `fourCorner` variant (L-bracket at all four corners instead of a plain square top-left)
+exists in the module but isn't exposed in the UI yet.
+
+- New "Registration Marks" panel block with a single checkbox (sheet-only; a no-op on the Design
+  tab, which has no page/margin concept). Wired through `buildSheetSVG`'s new optional third
+  argument rather than baked into `svgBuilder.ts` unconditionally.
+- **Automatic clearance**: enabling it raises the effective sheet-edge packing margin to at least
+  `REGMARK_CLEARANCE_MM` (origin + arm length = 30mm) via a new `effectiveSheetMarginMm()` helper,
+  so stickers can never be packed into the marks' zone and obscure them — a real constraint, not
+  just the upstream tool's visual-only white "safe area" hint.
+- Refactored the three near-identical "pack + resolve to SheetItem[]" blocks (`render()`, both
+  export handlers) into one `computeSheetItems()` helper while making this change, since regmarks
+  needed to plug into all of them consistently.
+
 **Known environment caveat, not a code issue**: in the sandboxed preview browser used during
 this session, blob-based file downloads (`<a download>` + `URL.createObjectURL`) intermittently
 stopped landing on disk partway through testing — reproduced even with a trivial 10-byte test

@@ -3,6 +3,7 @@ import { extractAlphaMask, type RawMask } from "./lib/trace";
 import { computeDesign, type DesignResult } from "./lib/design";
 import { SHEET_SIZES, packMixedSheet, type SheetSize } from "./lib/sheet";
 import { buildSingleStickerSVG, buildSheetSVG, type RenderOptions, type SheetItem } from "./lib/svgBuilder";
+import { REGMARK_CLEARANCE_MM } from "./lib/regmarks";
 import { downloadSvgString, exportSvgStringAsPdf } from "./lib/pdfExport";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
@@ -35,6 +36,7 @@ interface AppState {
   marginMm: number;
   gapMm: number;
   sheetMarginMm: number;
+  regmarksEnabled: boolean;
   designs: StickerDesign[];
   selectedDesignId: string | null;
   activeTab: Tab;
@@ -54,6 +56,7 @@ const state: AppState = {
   marginMm: 1,
   gapMm: 4,
   sheetMarginMm: 8,
+  regmarksEnabled: false,
   designs: [],
   selectedDesignId: null,
   activeTab: "design",
@@ -101,6 +104,7 @@ const gapInput = document.getElementById("gapInput") as HTMLInputElement;
 const gapValue = document.getElementById("gapValue") as HTMLSpanElement;
 
 const fillModeToggle = document.getElementById("fillModeToggle") as HTMLDivElement;
+const regmarksToggle = document.getElementById("regmarksToggle") as HTMLInputElement;
 
 const tabs = Array.from(document.querySelectorAll(".tab")) as HTMLButtonElement[];
 const sheetCountBadge = document.getElementById("sheetCount") as HTMLSpanElement;
@@ -184,9 +188,31 @@ function toScreenSVG(svgMarkup: string): string {
   return svgMarkup.replace(/width="([\d.]+)mm"/, 'width="$1"').replace(/height="([\d.]+)mm"/, 'height="$1"');
 }
 
+function effectiveSheetMarginMm(): number {
+  // Registration marks sit within REGMARK_CLEARANCE_MM of each edge — never pack stickers into
+  // that band, or printed artwork could overlap and obscure a mark the cutter needs to find.
+  return state.regmarksEnabled ? Math.max(state.sheetMarginMm, REGMARK_CLEARANCE_MM) : state.sheetMarginMm;
+}
+
 function maxStickerDimMm(): number {
   const sheet = currentSheet();
-  return Math.min(sheet.widthMm, sheet.heightMm) - 2 * state.sheetMarginMm;
+  return Math.min(sheet.widthMm, sheet.heightMm) - 2 * effectiveSheetMarginMm();
+}
+
+/** Packs the current designs onto the current sheet and resolves each placement to a renderable SheetItem. */
+function computeSheetItems(sheet: SheetSize): { placements: { id: string; x: number; y: number }[]; items: SheetItem[] } {
+  const mixedItems = state.designs
+    .filter((d) => d.design)
+    .map((d) => ({ id: d.id, widthMm: d.design!.actualWmm, heightMm: d.design!.actualHmm }));
+  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, effectiveSheetMarginMm(), state.fillMode);
+  const items: SheetItem[] = placements
+    .map((p) => {
+      const d = state.designs.find((dd) => dd.id === p.id);
+      if (!d || !d.design) return null;
+      return { design: d.design, x: p.x, y: p.y, opts: renderOptionsFor(d) } as SheetItem;
+    })
+    .filter((x): x is SheetItem => x !== null);
+  return { placements, items };
 }
 
 // ---- core recompute ----
@@ -227,10 +253,7 @@ function render() {
   renderThumbStrip();
 
   const sheet = currentSheet();
-  const mixedItems = state.designs
-    .filter((d) => d.design)
-    .map((d) => ({ id: d.id, widthMm: d.design!.actualWmm, heightMm: d.design!.actualHmm }));
-  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, state.sheetMarginMm, state.fillMode);
+  const { placements, items } = computeSheetItems(sheet);
   state.lastPlacements = placements;
   sheetCountBadge.textContent = String(placements.length);
 
@@ -253,14 +276,7 @@ function render() {
     summaryEl.textContent = `${fmtIn(sel.design.actualWmm)} × ${fmtIn(sel.design.actualHmm)} in`;
   } else if (state.activeTab === "sheet") {
     if (state.needsRefit) refitCamera(sheet.widthMm, sheet.heightMm);
-    const items: SheetItem[] = placements
-      .map((p) => {
-        const d = state.designs.find((dd) => dd.id === p.id);
-        if (!d || !d.design) return null;
-        return { design: d.design, x: p.x, y: p.y, opts: renderOptionsFor(d) } as SheetItem;
-      })
-      .filter((x): x is SheetItem => x !== null);
-    viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheet));
+    viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheet, state.regmarksEnabled ? "standard" : false));
     applyCameraTransform();
     if (state.editingSelected && sel) {
       const match = placements.find((p) => p.id === sel.id);
@@ -647,7 +663,7 @@ function startResize(e: PointerEvent, design: StickerDesign, hd: (typeof HANDLE_
           return { design: d.design, x: p.x, y: p.y, opts: renderOptionsFor(d) } as SheetItem;
         })
         .filter((x): x is SheetItem => x !== null);
-      viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheetAtStart));
+      viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheetAtStart, state.regmarksEnabled ? "standard" : false));
     }
     applyCameraTransform();
     renderOverlay(design);
@@ -767,6 +783,11 @@ fillModeToggle.addEventListener("click", (e) => {
   recompute();
 });
 
+regmarksToggle.addEventListener("change", () => {
+  state.regmarksEnabled = regmarksToggle.checked;
+  recompute();
+});
+
 // ---- tabs ----
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
@@ -791,18 +812,8 @@ downloadSvgBtn.addEventListener("click", () => {
     if (!sel?.design) return;
     downloadSvgString(buildSingleStickerSVG(sel.design, renderOptionsFor(sel)), `${baseName()}-cut.svg`);
   } else {
-    const mixedItems = state.designs
-      .filter((d) => d.design)
-      .map((d) => ({ id: d.id, widthMm: d.design!.actualWmm, heightMm: d.design!.actualHmm }));
-    const placements = packMixedSheet(sheet, mixedItems, state.gapMm, state.sheetMarginMm, state.fillMode);
-    const items: SheetItem[] = placements
-      .map((p) => {
-        const d = state.designs.find((dd) => dd.id === p.id);
-        if (!d || !d.design) return null;
-        return { design: d.design, x: p.x, y: p.y, opts: renderOptionsFor(d) } as SheetItem;
-      })
-      .filter((x): x is SheetItem => x !== null);
-    downloadSvgString(buildSheetSVG(items, sheet), `stickers-sheet.svg`);
+    const { items } = computeSheetItems(sheet);
+    downloadSvgString(buildSheetSVG(items, sheet, state.regmarksEnabled ? "standard" : false), `stickers-sheet.svg`);
   }
 });
 
@@ -816,18 +827,8 @@ downloadPdfBtn.addEventListener("click", async () => {
       const svg = buildSingleStickerSVG(sel.design, renderOptionsFor(sel));
       await exportSvgStringAsPdf(svg, sel.design.actualWmm, sel.design.actualHmm, `${baseName()}-cut.pdf`);
     } else {
-      const mixedItems = state.designs
-        .filter((d) => d.design)
-        .map((d) => ({ id: d.id, widthMm: d.design!.actualWmm, heightMm: d.design!.actualHmm }));
-      const placements = packMixedSheet(sheet, mixedItems, state.gapMm, state.sheetMarginMm, state.fillMode);
-      const items: SheetItem[] = placements
-        .map((p) => {
-          const d = state.designs.find((dd) => dd.id === p.id);
-          if (!d || !d.design) return null;
-          return { design: d.design, x: p.x, y: p.y, opts: renderOptionsFor(d) } as SheetItem;
-        })
-        .filter((x): x is SheetItem => x !== null);
-      const svg = buildSheetSVG(items, sheet);
+      const { items } = computeSheetItems(sheet);
+      const svg = buildSheetSVG(items, sheet, state.regmarksEnabled ? "standard" : false);
       await exportSvgStringAsPdf(svg, sheet.widthMm, sheet.heightMm, `stickers-sheet.pdf`);
     }
   } finally {
