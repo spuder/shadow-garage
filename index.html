@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shadow Garage</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">Shadow<span>Garage</span></div>
+        <button id="themeToggle" class="icon-btn" title="Toggle light/dark" aria-label="Toggle theme">
+          <svg id="themeIconMoon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+          <svg id="themeIconSun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" hidden><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </button>
+      </header>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="design">Design</button>
+        <button class="tab" data-tab="sheet">Sheet Preview <span id="sheetCount" class="badge">0</span></button>
+      </div>
+
+      <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" multiple hidden />
+
+      <main class="layout">
+        <section class="preview-panel">
+          <div id="previewHost" class="preview-host">
+            <div id="dropzone" class="dropzone">
+              <div class="dropzone-icon">&#8593;</div>
+              <div class="dropzone-text">Click or drop images here</div>
+              <div class="dropzone-sub">PNG, JPEG, or SVG — transparency works best</div>
+            </div>
+            <div id="viewportInner" class="viewport-inner"></div>
+            <div id="overlayLayer" class="overlay-layer"></div>
+          </div>
+
+          <div id="zoomControls" class="zoom-controls" hidden>
+            <button id="zoomOutBtn" class="icon-btn small" title="Zoom out (-)">&#8722;</button>
+            <button id="zoomFitBtn" class="zoom-fit-btn" title="Fit to view (0)">Fit</button>
+            <button id="zoomInBtn" class="icon-btn small" title="Zoom in (+)">&#43;</button>
+          </div>
+
+          <div id="thumbStrip" class="thumb-strip" hidden></div>
+        </section>
+
+        <aside class="control-panel">
+          <div class="control-scroll">
+            <div class="panel-block" id="imageBlock" hidden>
+              <div class="block-title">Sticker Image</div>
+              <div class="file-row">
+                <span id="fileName" class="file-name">—</span>
+                <div class="file-row-buttons">
+                  <button id="addImageBtn" class="btn-secondary small">Add</button>
+                  <button id="removeImageBtn" class="btn-secondary small">Remove</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-block">
+              <div class="block-title">Paper Type</div>
+              <div id="paperTypeGrid" class="paper-type-grid"></div>
+            </div>
+
+            <div class="panel-block">
+              <div class="block-title">Paper Size</div>
+              <select id="sheetSelect"></select>
+            </div>
+
+            <div class="panel-block">
+              <div class="block-title">Offset Margin</div>
+              <label class="field-label">
+                Space around artwork: <span id="marginValue">1.0</span> mm
+                <input id="marginSlider" type="range" min="0.2" max="10" step="0.1" value="1" />
+              </label>
+            </div>
+
+            <div class="panel-block">
+              <div class="block-title">Quantity</div>
+              <div class="segmented" id="fillModeToggle">
+                <button data-mode="single" class="active">Single</button>
+                <button data-mode="fill">Fill sheet</button>
+              </div>
+              <div class="field-label" style="margin-top: 10px;">
+                Gap between stickers: <span id="gapValue">4.0</span> mm
+                <input id="gapInput" type="range" min="0" max="20" step="0.5" value="4" />
+              </div>
+            </div>
+          </div>
+
+          <div class="bottom-bar">
+            <div class="summary" id="summary">Upload an image to begin</div>
+            <div class="export-buttons">
+              <button id="downloadSvgBtn" class="btn-primary" disabled>Download SVG</button>
+              <button id="downloadPdfBtn" class="btn-secondary" disabled>Download PDF</button>
+            </div>
+          </div>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
