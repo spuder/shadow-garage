@@ -566,11 +566,19 @@ select {
   @page {
     margin: 0;
   }
+  /* Dark mode is a screen-preview convenience only — the printed page must always be on a
+     white backdrop, regardless of theme, or a dark --bg would bleed through as printed black
+     ink anywhere the sticker SVG itself is transparent (a "Clear" paper sticker, or the margin
+     around it on the page). */
+  html, body {
+    background: white !important;
+  }
   body > *:not(#printArea) {
     display: none !important;
   }
   #printArea {
     display: block !important;
+    background: white;
   }
   #printArea svg {
     display: block;

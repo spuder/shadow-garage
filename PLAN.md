@@ -198,6 +198,29 @@ why the hint text says plainly it's for geometric logos/icons, not curvy or text
 from a single `state.preserveSharpCorners` (global, like margin) into `recompute()` and the
 corner-drag live-preview path in `main.ts`.
 
+## 2h. Two more bugs found and fixed
+
+1. **Dark mode was printing as black ink.** The Print feature (§2f) hides everything but
+   `#printArea` during print, but never overrode `body`'s own background — which is the dark
+   theme's near-black `--bg` unless the viewer happens to be in light mode. Since a single
+   sticker's exported SVG has no full-canvas background rect of its own (intentional — it's what
+   makes the "Clear" paper type genuinely transparent for file exports), that dark `body`
+   background showed straight through as printed ink, both around the sticker and anywhere the
+   SVG itself is transparent. Fixed with `@media print { html, body { background: white
+   !important; } }` — screen theme stays a pure preview convenience, the printed page is always
+   on white regardless of it. Deliberately a CSS-only fix, not a change to `svgBuilder.ts`'s SVG
+   output, since that output's transparency is correct/intentional for saved files.
+2. **Registration marks were wasting a lot of sheet space.** `effectiveSheetMarginMm()` (§2d)
+   inflated the packing margin to the full 30mm clearance *on all four sides*, when the marks
+   only actually occupy ~30×30mm squares at 3 (or 4) corners — on a Letter sheet (215.9mm wide)
+   that wastes 60mm of width (28%) that has nothing near it to protect. Replaced with precise
+   per-corner keep-out rectangles (`getRegmarkKeepoutRects` in `regmarks.ts`) and taught
+   `packMixedSheet` (`sheet.ts`) to narrow only the specific shelf rows that actually vertically
+   overlap a keepout, pushing the row's left/right bound in just enough to clear it, rather than
+   shrinking the whole usable rectangle uniformly. Verified: the same test sheet went from a
+   handful of stickers with huge dead margins to 46, using the full width on every row except the
+   couple that overlap a corner mark.
+
 **Known environment caveat, not a code issue**: in the sandboxed preview browser used during
 this session, blob-based file downloads (`<a download>` + `URL.createObjectURL`) intermittently
 stopped landing on disk partway through testing — reproduced even with a trivial 10-byte test

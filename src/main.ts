@@ -3,7 +3,7 @@ import { extractAlphaMask, type RawMask } from "./lib/trace";
 import { computeDesign, type DesignResult } from "./lib/design";
 import { SHEET_SIZES, packMixedSheet, type SheetSize } from "./lib/sheet";
 import { buildSingleStickerSVG, buildSheetSVG, type RenderOptions, type SheetItem } from "./lib/svgBuilder";
-import { REGMARK_CLEARANCE_MM } from "./lib/regmarks";
+import { getRegmarkKeepoutRects } from "./lib/regmarks";
 import { downloadSvgString } from "./lib/download";
 import { printSvg } from "./lib/print";
 import { PAPER_TYPES } from "./lib/paperTypes";
@@ -199,15 +199,9 @@ function toScreenSVG(svgMarkup: string): string {
   return svgMarkup.replace(/width="([\d.]+)mm"/, 'width="$1"').replace(/height="([\d.]+)mm"/, 'height="$1"');
 }
 
-function effectiveSheetMarginMm(): number {
-  // Registration marks sit within REGMARK_CLEARANCE_MM of each edge — never pack stickers into
-  // that band, or printed artwork could overlap and obscure a mark the cutter needs to find.
-  return state.regmarksEnabled ? Math.max(state.sheetMarginMm, REGMARK_CLEARANCE_MM) : state.sheetMarginMm;
-}
-
 function maxStickerDimMm(): number {
   const sheet = currentSheet();
-  return Math.min(sheet.widthMm, sheet.heightMm) - 2 * effectiveSheetMarginMm();
+  return Math.min(sheet.widthMm, sheet.heightMm) - 2 * state.sheetMarginMm;
 }
 
 /** Packs the current designs onto the current sheet and resolves each placement to a renderable SheetItem. */
@@ -215,7 +209,11 @@ function computeSheetItems(sheet: SheetSize): { placements: { id: string; x: num
   const mixedItems = state.designs
     .filter((d) => d.design)
     .map((d) => ({ id: d.id, widthMm: d.design!.actualWmm, heightMm: d.design!.actualHmm }));
-  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, effectiveSheetMarginMm(), state.fillMode);
+  // Registration marks only occupy small squares at their corners, not a full-width/height band —
+  // route packing around just those squares rather than shrinking the whole usable area from
+  // every edge (see getRegmarkKeepoutRects).
+  const keepouts = state.regmarksEnabled ? getRegmarkKeepoutRects(sheet.widthMm, sheet.heightMm, state.regmarkStyle === "four_corner") : [];
+  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, state.sheetMarginMm, state.fillMode, keepouts);
   const items: SheetItem[] = placements
     .map((p) => {
       const d = state.designs.find((dd) => dd.id === p.id);
