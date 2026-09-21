@@ -5,7 +5,7 @@ import { computeCutPath, type RawMask } from "./trace";
 export interface DesignResult {
   cutContoursMM: Contour[]; // final cut-line polygons, origin at (0,0)
   imagePlacementMM: { x: number; y: number; width: number; height: number }; // where to draw the raster artwork
-  actualWmm: number; // the size actually achieved (aspect-preserving, so this can be slightly under the requested target)
+  actualWmm: number; // the size actually achieved — matches the target exactly unless preserveAspect clamped it
   actualHmm: number;
 }
 
@@ -23,14 +23,31 @@ const MIN_MARGIN_MM = 0.2;
  * bleed margin), computes the final cut-line contours and the placement rect for the original image,
  * both in millimeters with the origin at the sticker's own top-left corner.
  */
-export function computeDesign(raw: RawMask, targetWmm: number, targetHmm: number, marginMm: number): DesignResult {
+export function computeDesign(
+  raw: RawMask,
+  targetWmm: number,
+  targetHmm: number,
+  marginMm: number,
+  preserveAspect = true,
+  driveBy: "width" | "height" = "width"
+): DesignResult {
   const rawW = raw.rawBBox.maxX - raw.rawBBox.minX;
+  const rawH = raw.rawBBox.maxY - raw.rawBBox.minY;
 
   // Clamp margin so it never consumes the whole sticker, and never drops below the merge floor.
+  // (targetWmm/targetHmm are only used here as a rough safety bound, not as a hard constraint —
+  // see the driving-axis comment below for why the other axis isn't forced to match them.)
   const safeMarginMm = Math.max(MIN_MARGIN_MM, Math.min(marginMm, Math.min(targetWmm, targetHmm) * 0.4));
 
-  const innerWmm = Math.max(0.1, targetWmm - 2 * safeMarginMm);
-  const scale = innerWmm / rawW; // mm per mask-px, derived from width; height follows from the artwork's own aspect ratio
+  // Margin is a fixed mm amount, so it changes the *aspect ratio* of the overall (artwork+margin)
+  // bounding box relative to the artwork alone — more so for smaller stickers, where the margin is
+  // a bigger fraction of the total. When preserving aspect, we therefore pick ONE axis to hit
+  // exactly (whichever the caller says they're actually editing) and let the other emerge from
+  // the real geometry, rather than independently guessing a target for the other axis and forcing
+  // a uniform fit to both — that previously caused a systematic undershoot (typing "1.75in" wide
+  // could land at "1.53in") whenever the guessed other-axis target didn't match the true result.
+  const driveWidth = !preserveAspect || driveBy === "width";
+  const scale = driveWidth ? Math.max(0.1, targetWmm - 2 * safeMarginMm) / rawW : Math.max(0.1, targetHmm - 2 * safeMarginMm) / rawH;
   const marginPx = safeMarginMm / scale;
 
   const { contours, bbox } = computeCutPath(raw, marginPx);
@@ -43,10 +60,21 @@ export function computeDesign(raw: RawMask, targetWmm: number, targetHmm: number
   const actualWmmRaw = dilatedBBoxMM.maxX - dilatedBBoxMM.minX;
   const actualHmmRaw = dilatedBBoxMM.maxY - dilatedBBoxMM.minY;
 
-  // Exact-fit correction: a single uniform scale (never independent per-axis) so the result
-  // always fits within the requested size without ever distorting its proportions.
-  const fixScale = Math.min(targetWmm / Math.max(0.001, actualWmmRaw), targetHmm / Math.max(0.001, actualHmmRaw));
-  cutMM = scaleContours(cutMM, fixScale, fixScale);
+  // Exact-fit correction, cleaning up rounding/simplification noise:
+  // - preserving aspect: a single uniform factor, computed only from the driving axis, so that
+  //   axis lands exactly on target and the other simply follows the true aspect ratio.
+  // - not preserving aspect (unlocked): independent per-axis factors, which lets a deliberately
+  //   mismatched W/H actually stretch the sticker to fit both exactly.
+  let scaleX: number, scaleY: number;
+  if (preserveAspect) {
+    const driveTarget = driveWidth ? targetWmm : targetHmm;
+    const driveActual = driveWidth ? actualWmmRaw : actualHmmRaw;
+    scaleX = scaleY = driveTarget / Math.max(0.001, driveActual);
+  } else {
+    scaleX = targetWmm / Math.max(0.001, actualWmmRaw);
+    scaleY = targetHmm / Math.max(0.001, actualHmmRaw);
+  }
+  cutMM = scaleContours(cutMM, scaleX, scaleY);
 
   const finalBBoxMM = boundingBox(cutMM);
   const actualWmm = finalBBoxMM.maxX - finalBBoxMM.minX;
@@ -59,7 +87,7 @@ export function computeDesign(raw: RawMask, targetWmm: number, targetHmm: number
   ];
   let rawMM = translateContours([rawCorners], -bbox.minX, -bbox.minY);
   rawMM = scaleContours(rawMM, scale, scale);
-  rawMM = scaleContours(rawMM, fixScale, fixScale);
+  rawMM = scaleContours(rawMM, scaleX, scaleY);
   const [p0, p1] = rawMM[0];
 
   return {

@@ -56,6 +56,24 @@
               </div>
             </div>
 
+            <div class="panel-block" id="sizeBlock" hidden>
+              <div class="block-title">Size (in)</div>
+              <div class="size-row">
+                <label>
+                  Width
+                  <input id="widthInput" type="number" min="0.25" step="0.05" value="1.97" />
+                </label>
+                <button id="lockAspectBtn" class="lock-btn" title="Lock aspect ratio" aria-pressed="true">
+                  <svg id="lockIconClosed" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                  <svg id="lockIconOpen" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" hidden><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.75-1.5"/></svg>
+                </button>
+                <label>
+                  Height
+                  <input id="heightInput" type="number" min="0.25" step="0.05" value="1.97" />
+                </label>
+              </div>
+            </div>
+
             <div class="panel-block">
               <div class="block-title">Paper Type</div>
               <div id="paperTypeGrid" class="paper-type-grid"></div>

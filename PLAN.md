@@ -104,6 +104,17 @@ resize, zoom/pan, multi-design, fill-sheet, both themes):
   selection outline (works in both tabs), and `Delete`/`Backspace` deletes the selected design
   when it's focused (guarded against firing while a text input, like the dimension-pill editor,
   has focus).
+- **Width/Height text boxes + aspect lock** back in the side panel (`Size (in)` block), for
+  precise fine-tuning alongside the drag-to-resize interaction. A padlock button between the
+  two fields, defaulting **on** (locked): editing either field recomputes the other from
+  `artworkAspect`. Unlocking allows a genuine non-uniform stretch — this required restoring
+  `computeDesign`'s exact-fit step to independent per-axis scaling (`fixX`/`fixY`) behind a new
+  `preserveAspect` parameter (default `true`, matching the old uniform-only behavior when
+  locked), now that the real corner-cropping bug is fixed at its source (mask-canvas padding).
+  Locked calls (corner-drag, the floating pill, locked text-box edits) always pass matched W/H
+  so `preserveAspect` is a no-op for them either way; unlocked text-box edits are the only path
+  that intentionally passes mismatched W/H to get a stretch. Fields skip re-syncing their value
+  while the user has that specific field focused, so typing doesn't fight with the live re-render.
 
 **Known environment caveat, not a code issue**: in the sandboxed preview browser used during
 this session, blob-based file downloads (`<a download>` + `URL.createObjectURL`) intermittently

@@ -366,6 +366,45 @@ select {
   color: var(--text);
 }
 
+.size-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.size-row label {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.size-row input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 14px;
+  background: var(--panel-bg);
+  color: var(--text);
+}
+.lock-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text);
+  border-radius: 9px;
+  width: 37px;
+  height: 37px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.lock-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .paper-type-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

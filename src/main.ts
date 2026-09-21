@@ -22,6 +22,8 @@ interface StickerDesign {
   artworkAspect: number;
   widthMm: number;
   heightMm: number;
+  aspectLocked: boolean;
+  driveBy: "width" | "height"; // which axis is authoritative when aspect is locked (see design.ts)
   design: DesignResult | null;
 }
 
@@ -78,6 +80,13 @@ const imageBlock = document.getElementById("imageBlock") as HTMLDivElement;
 const fileNameEl = document.getElementById("fileName") as HTMLSpanElement;
 const addImageBtn = document.getElementById("addImageBtn") as HTMLButtonElement;
 const removeImageBtn = document.getElementById("removeImageBtn") as HTMLButtonElement;
+
+const sizeBlock = document.getElementById("sizeBlock") as HTMLDivElement;
+const widthInput = document.getElementById("widthInput") as HTMLInputElement;
+const heightInput = document.getElementById("heightInput") as HTMLInputElement;
+const lockAspectBtn = document.getElementById("lockAspectBtn") as HTMLButtonElement;
+const lockIconClosed = document.getElementById("lockIconClosed") as unknown as SVGElement;
+const lockIconOpen = document.getElementById("lockIconOpen") as unknown as SVGElement;
 
 const themeToggle = document.getElementById("themeToggle") as HTMLButtonElement;
 const themeIconMoon = document.getElementById("themeIconMoon") as unknown as SVGElement;
@@ -184,7 +193,11 @@ function maxStickerDimMm(): number {
 function recompute() {
   const margin = state.marginMm;
   for (const d of state.designs) {
-    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, margin);
+    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, margin, d.aspectLocked, d.driveBy);
+    // Keep the stored target in sync with what was actually achieved, so the next edit (a drag,
+    // another text-box change) starts from reality instead of a stale/approximate guess.
+    d.widthMm = d.design.actualWmm;
+    d.heightMm = d.design.actualHmm;
   }
   render();
 }
@@ -202,6 +215,7 @@ function render() {
   const hasImages = state.designs.length > 0;
   dropzone.style.display = hasImages ? "none" : "flex";
   imageBlock.hidden = !hasImages;
+  sizeBlock.hidden = !hasImages;
   zoomControls.hidden = !hasImages;
   thumbStrip.hidden = state.designs.length < 2;
   removeImageBtn.disabled = !hasImages;
@@ -209,6 +223,7 @@ function render() {
   const sel = selectedDesign();
   fileNameEl.textContent = sel ? sel.fileName : "—";
 
+  syncSizeInputs(sel);
   renderThumbStrip();
 
   const sheet = currentSheet();
@@ -286,6 +301,50 @@ function renderThumbStrip() {
     thumbStrip.appendChild(thumb);
   });
 }
+
+// ---- size fields (width/height text boxes + aspect lock) ----
+function syncSizeInputs(design: StickerDesign | null) {
+  if (!design || !design.design) return;
+  // Don't stomp on whichever field the user is actively typing into.
+  if (document.activeElement !== widthInput) widthInput.value = mmToIn(design.design.actualWmm).toFixed(2);
+  if (document.activeElement !== heightInput) heightInput.value = mmToIn(design.design.actualHmm).toFixed(2);
+  lockAspectBtn.setAttribute("aria-pressed", String(design.aspectLocked));
+  lockIconClosed.toggleAttribute("hidden", !design.aspectLocked);
+  lockIconOpen.toggleAttribute("hidden", design.aspectLocked);
+}
+
+widthInput.addEventListener("input", () => {
+  const design = selectedDesign();
+  if (!design) return;
+  const v = parseFloat(widthInput.value);
+  if (!Number.isFinite(v) || v <= 0) return;
+  design.widthMm = clamp(inToMm(v), MIN_SIZE_MM, maxStickerDimMm());
+  design.driveBy = "width"; // hit width exactly; height (if locked) follows the true geometry
+  recompute();
+});
+
+heightInput.addEventListener("input", () => {
+  const design = selectedDesign();
+  if (!design) return;
+  const v = parseFloat(heightInput.value);
+  if (!Number.isFinite(v) || v <= 0) return;
+  design.heightMm = clamp(inToMm(v), MIN_SIZE_MM, maxStickerDimMm());
+  design.driveBy = "height"; // hit height exactly; width (if locked) follows the true geometry
+  recompute();
+});
+
+lockAspectBtn.addEventListener("click", () => {
+  const design = selectedDesign();
+  if (!design) return;
+  design.aspectLocked = !design.aspectLocked;
+  if (design.aspectLocked) {
+    // Re-locking: hold width fixed and let height snap back to the true proportional geometry.
+    design.driveBy = "width";
+    recompute();
+  } else {
+    render();
+  }
+});
 
 // ---- camera / pan / zoom ----
 function refitCamera(contentWmm: number, contentHmm: number) {
@@ -504,9 +563,8 @@ function renderDimReadout(design: StickerDesign, screenX: number, screenY: numbe
     function commit() {
       const v = parseFloat(wInput.value);
       if (Number.isFinite(v) && v > 0) {
-        const newWmm = clamp(inToMm(v), MIN_SIZE_MM, maxStickerDimMm());
-        design.widthMm = newWmm;
-        design.heightMm = newWmm / design.artworkAspect;
+        design.widthMm = clamp(inToMm(v), MIN_SIZE_MM, maxStickerDimMm());
+        design.driveBy = "width";
         recompute();
         state.editingSelected = true;
         renderOverlay(design);
@@ -629,6 +687,8 @@ async function handleFiles(files: FileList | File[]) {
           artworkAspect,
           widthMm,
           heightMm,
+          aspectLocked: true,
+          driveBy: "width",
           design: null,
         };
         state.designs.push(design);
