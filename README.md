@@ -46,21 +46,12 @@ registration marks), or any other script that talks to the cutter.
   side panel with an aspect-ratio lock (or unlock it to deliberately stretch).
 - **Pack multiple stickers onto a sheet** (Letter / A4 / A3) — one of each, or auto-filled to
   cover the page — with a live preview and per-sticker delete/resize right on the sheet.
-- **Silhouette-style registration marks** — Standard (3-mark) or Four-corner — reverse-engineered
-  from inkscape-silhouette's own mark generator (spec credited below), with sticker placement
-  automatically kept clear of the marks so nothing overlaps or obscures them.
+- **Silhouette-style registration marks** — Standard (3-mark) or Four-corner — with sticker
+  placement automatically kept clear of the marks so nothing overlaps or obscures them.
 - **Print directly** to your system print dialog at true physical size, or **download the SVG**
   for use elsewhere.
 - Paper type swatches (White / Clear / Holographic / Matte Black / Glossy Silver) and a
   dark/light theme.
-
-## Registration marks
-
-The mark geometry (a solid square top-left, L-shaped brackets top-right/bottom-left, 0.3mm
-stroke, 10mm inset from the page edge, 20mm arms) is reverse-engineered from
-[fablabnbg/inkscape-silhouette](https://github.com/fablabnbg/inkscape-silhouette)'s
-`render_silhouette_regmarks.py` (GPL-2.0) — studied for the spec, not vendored. See
-[`src/lib/regmarks.ts`](src/lib/regmarks.ts).
 
 ## License
 
