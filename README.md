@@ -26,6 +26,11 @@ correctly-registered cut file — entirely in the browser, with no install. The 
 Python script (e.g. `plotty`) talking to the plotter directly, or imported into Silhouette Studio
 for the actual cut.
 
+<p align="center">
+  <img src=".github/assets/screenshot-design.webp" alt="Design view: a traced die-cut outline around a wordmark" width="49%">
+  <img src=".github/assets/screenshot-sheet.webp" alt="Sheet Preview: a full page auto-filled with stickers, registration marks in the corners" width="49%">
+</p>
+
 ## What it does
 
 - **Upload one or more images** (PNG, JPEG, or SVG) — drag-and-drop or multi-select, with a
