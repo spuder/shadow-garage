@@ -22,9 +22,11 @@ choosing between two bad options:
 Shadow Garage doesn't try to replace either of those. It just handles the one part that's
 genuinely annoying to get right — turning an arbitrary image into a correctly-sized,
 correctly-registered cut file — entirely in the browser, with no install. The resulting SVG
-(marks included) is then handed off to whichever cutting path you've already got working: a
-Python script (e.g. `plotty`) talking to the plotter directly, or imported into Silhouette Studio
-for the actual cut.
+(marks included) is then handed off to whichever cutting path you've already got working:
+imported into Silhouette Studio, sent straight to the plotter with
+[Plottie](https://github.com/mossblaser/plottie) (a command-line tool that cuts/plots an SVG on a
+Silhouette machine directly — no Silhouette Studio or Inkscape required, and it auto-detects
+registration marks), or any other script that talks to the cutter.
 
 <p align="center">
   <img src=".github/assets/screenshot-design.webp" alt="Design view: a traced die-cut outline around a wordmark" width="49%">
@@ -52,16 +54,6 @@ for the actual cut.
 - Paper type swatches (White / Clear / Holographic / Matte Black / Glossy Silver) and a
   dark/light theme.
 
-## Getting started
-
-```bash
-npm install
-npm run dev
-```
-
-`npm run build` produces a static `dist/` that can be hosted anywhere. This repo auto-deploys to
-GitHub Pages on every push to `master` via `.github/workflows/deploy.yml`.
-
 ## Registration marks
 
 The mark geometry (a solid square top-left, L-shaped brackets top-right/bottom-left, 0.3mm
@@ -69,12 +61,6 @@ stroke, 10mm inset from the page edge, 20mm arms) is reverse-engineered from
 [fablabnbg/inkscape-silhouette](https://github.com/fablabnbg/inkscape-silhouette)'s
 `render_silhouette_regmarks.py` (GPL-2.0) — studied for the spec, not vendored. See
 [`src/lib/regmarks.ts`](src/lib/regmarks.ts).
-
-## Tech stack
-
-Vite + TypeScript, no UI framework. No PDF/canvas libraries either — printing goes through the
-browser's own print dialog rather than generating a PDF. See [`PLAN.md`](PLAN.md) for the fuller
-build history and design notes.
 
 ## License
 
