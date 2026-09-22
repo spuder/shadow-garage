@@ -67,6 +67,12 @@ html, body {
   color: var(--accent);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .icon-btn {
   display: flex;
   align-items: center;
@@ -77,6 +83,9 @@ html, body {
   border-radius: 9px;
   width: 34px;
   height: 34px;
+  font-size: 16px;
+  line-height: 1;
+  text-decoration: none;
   cursor: pointer;
 }
 .icon-btn.small {
