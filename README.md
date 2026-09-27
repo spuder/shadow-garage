@@ -50,8 +50,8 @@ registration marks), or any other script that talks to the cutter.
   placement automatically kept clear of the marks so nothing overlaps or obscures them.
 - **Print directly** to your system print dialog at true physical size, or **download the SVG**
   for use elsewhere.
-- Paper type swatches (White / Clear / Holographic / Matte Black / Glossy Silver) and a
-  dark/light theme.
+- Paper types (White sticker / Clear sticker / 20 lb printer paper), each with its own cut
+  settings, and a dark/light theme.
 
 ## License
 

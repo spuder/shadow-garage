@@ -110,6 +110,7 @@ describe("paper types", () => {
   it("each points at a cut material, and printer paper cuts through slower and deeper", async () => {
     const { PAPER_TYPES } = await import("../paperTypes");
     const { CUT_MATERIALS, PRINTER_PAPER_20LB, STICKER_PAPER: sticker } = await import("./materials");
+    expect(PAPER_TYPES.map((p) => p.id)).toEqual(["white", "clear", "printer-paper-20lb"]);
     for (const pt of PAPER_TYPES) expect(CUT_MATERIALS).toContain(pt.cutMaterial);
     const printer = PAPER_TYPES.find((p) => p.id === "printer-paper-20lb")!;
     expect(printer.adhesive).toBe(false);

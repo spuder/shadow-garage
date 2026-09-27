@@ -700,3 +700,7 @@ based on inkscape-silhouette's "Print Paper Light Weight" (media 132, pressure 5
 raised and the blade deeper so it cuts through rather than scoring, and speed lowered because
 speed 10 / pressure 20 tore plain paper on the Cameo 3. All sticker types share `STICKER_PAPER`
 (renamed from `WHITE_STICKER_PAPER`). The Cutter panel shows the active settings.
+
+**Trimmed paper types** to White sticker, Clear sticker and 20 lb printer paper. Holographic,
+Matte black and Glossy silver only differed by the border colour, and that colour was printed: a
+fake lavender, black or grey border inked over the real material. They're removed.

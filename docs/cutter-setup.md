@@ -10,7 +10,7 @@ settings (shown in the Cutter panel):
 
 | Paper type | Cut | Pressure | Speed | Blade |
 |---|---|---|---|---|
-| Adhesive sticker sheets (white, clear, holographic, matte black, glossy silver) | kiss cut, backing left intact | 20 | 10 | 1 |
+| Adhesive sticker sheets (white, clear) | kiss cut, backing left intact | 20 | 10 | 1 |
 | 20 lb printer paper (no adhesive) | cut all the way through | 10 | 5 | 2 |
 
 All of these are starting values, not yet tuned on hardware. Run **Test cut** on a scrap of the

@@ -12,8 +12,10 @@ export interface PaperType {
   cutMaterial: CutMaterial;
 }
 
-// The sticker stocks all share the one tuned sticker preset for now; a stock that needs different
-// settings (thick vinyl, holographic film) gets its own entry in materials.ts.
+// Only stocks the app can print on honestly: the border around each design is filled with
+// exportColor when printing, so a coloured stock (holographic, black, silver) would get a fake
+// printed border rather than showing the real material. Both sticker stocks share the one sticker
+// cut preset; a stock that needs different settings gets its own entry in materials.ts.
 export const PAPER_TYPES: PaperType[] = [
   { id: "white", name: "White sticker", adhesive: true, swatch: "#ffffff", exportColor: "#ffffff", showBorder: true, cutMaterial: STICKER_PAPER },
   {
@@ -23,25 +25,6 @@ export const PAPER_TYPES: PaperType[] = [
     swatch: "repeating-conic-gradient(#3a3a44 0% 25%, #dcdce2 0% 50%) 50% / 10px 10px",
     exportColor: "transparent",
     showBorder: false,
-    cutMaterial: STICKER_PAPER,
-  },
-  {
-    id: "holographic",
-    name: "Holographic sticker",
-    adhesive: true,
-    swatch: "linear-gradient(120deg, #ff9a9e, #fad0c4, #fbc2eb, #a6c1ee, #a1ffce)",
-    exportColor: "#dcd6f7",
-    showBorder: true,
-    cutMaterial: STICKER_PAPER,
-  },
-  { id: "matte", name: "Matte black sticker", adhesive: true, swatch: "#1c1c1e", exportColor: "#1c1c1e", showBorder: true, cutMaterial: STICKER_PAPER },
-  {
-    id: "glossy-silver",
-    name: "Glossy silver sticker",
-    adhesive: true,
-    swatch: "linear-gradient(135deg, #f4f4f5, #c9c9cf, #f4f4f5)",
-    exportColor: "#cfcfd4",
-    showBorder: true,
     cutMaterial: STICKER_PAPER,
   },
   {
