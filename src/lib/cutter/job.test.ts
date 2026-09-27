@@ -75,3 +75,25 @@ describe("layoutJob", () => {
     expect(() => layoutJob(sheet("A3"), cameo3, false)).toThrow(/doesn't fit/);
   });
 });
+
+describe("sheet to cutter coordinates", () => {
+  it("sends a placed sticker at its exact size, mark-relative, axes swapped", async () => {
+    const { pathCommands } = await import("./graphtec");
+    const sticker: Contour = [
+      [0, 0],
+      [50, 0],
+      [50, 20],
+      [0, 20],
+    ];
+    const paths = buildCutPaths([{ design: designOf([sticker]), x: 40, y: 60 }], 0);
+    const { frame } = layoutJob(sheet("Letter"), cameo3, "standard");
+    const pts = pathCommands(paths, frame).map((c) => c.slice(1).split(",").map(Number));
+    const downs = pts.map((p) => p[0]);
+    const acrosses = pts.map((p) => p[1]);
+    // 50 x 20 mm = 1000 x 400 SU, starting at ((40-10)*20, (60-10)*20)
+    expect(Math.min(...acrosses)).toBe(600);
+    expect(Math.max(...acrosses) - Math.min(...acrosses)).toBe(1000);
+    expect(Math.min(...downs)).toBe(1000);
+    expect(Math.max(...downs) - Math.min(...downs)).toBe(400);
+  });
+});

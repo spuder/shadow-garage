@@ -6,20 +6,58 @@ import { GraphtecProtocol } from "./graphtec";
 import type { CutMaterial } from "./materials";
 import type { CutterModel } from "./models";
 import type { CutFrame, CutterProtocol, RegmarkSpec } from "./protocol";
-import type { Transport } from "./transport";
+import { boundingBox } from "../geometry";
+import { LoggingTransport, type Transport } from "./transport";
 
-export type CutPhase = "waiting" | "loadMat" | "setup" | "regmarks" | "cutting" | "finishing" | "done";
+export type CutPhase = "waiting" | "loadMat" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
 
 export interface CutJob {
   paths: Contour[]; // sheet millimetres
   frame: CutFrame;
   regmarks: RegmarkSpec | null;
+  /** How to register against the marks: the cutter's automatic scan (default), or the user jogging the tool onto the first mark. */
+  registration?: "auto" | "manual";
   material: CutMaterial;
+  /** Short description for the log, e.g. "sheet" or "calibration". */
+  label?: string;
+}
+
+/** Lets the UI jog the tool onto the top-left mark during manual registration. Positions are media millimetres. */
+export interface ManualJog {
+  readonly x: number;
+  readonly y: number;
+  move(dxMm: number, dyMm: number): Promise<void>;
 }
 
 export interface JobEvents {
   onPhase?: (phase: CutPhase) => void;
   onProgress?: (fraction: number) => void;
+  /** Called during manual registration; resolve once the tool is over the mark, reject to cancel. */
+  onManualRegistration?: (jog: ManualJog) => Promise<void>;
+}
+
+class JogController implements ManualJog {
+  x: number;
+  y: number;
+  private queue: Promise<void> = Promise.resolve();
+  private readonly protocol: CutterProtocol;
+  private readonly model: CutterModel;
+
+  constructor(protocol: CutterProtocol, model: CutterModel, x: number, y: number) {
+    this.protocol = protocol;
+    this.model = model;
+    this.x = x;
+    this.y = y;
+  }
+
+  move(dxMm: number, dyMm: number): Promise<void> {
+    this.x = Math.min(this.model.mat.widthMm, Math.max(0, this.x + dxMm));
+    this.y = Math.min(this.model.mat.heightMm, Math.max(0, this.y + dyMm));
+    const { x, y } = this;
+    // Serialize moves so rapid clicks never interleave writes.
+    this.queue = this.queue.then(() => this.protocol.moveTo(x, y));
+    return this.queue;
+  }
 }
 
 function protocolFor(model: CutterModel, transport: Transport): CutterProtocol {
@@ -33,24 +71,31 @@ export class CutterSession {
   readonly model: CutterModel;
   readonly firmware: string;
   readonly transport: Transport;
+  /** Everything sent to and received from the cutter since connecting. */
+  readonly log: LoggingTransport;
   private readonly protocol: CutterProtocol;
   private busy = false;
 
-  private constructor(model: CutterModel, transport: Transport, protocol: CutterProtocol, firmware: string) {
+  private constructor(model: CutterModel, transport: Transport, log: LoggingTransport, protocol: CutterProtocol, firmware: string) {
     this.model = model;
     this.transport = transport;
+    this.log = log;
     this.protocol = protocol;
     this.firmware = firmware;
   }
 
   /** Handshakes with the cutter on an already-open transport; closes the transport if that fails. */
   static async open(transport: Transport, model: CutterModel): Promise<CutterSession> {
-    const protocol = protocolFor(model, transport);
+    const log = new LoggingTransport(transport);
+    log.note(`connect: ${model.manufacturer} ${model.name} via ${transport.label}; mark search args ${model.regmarkArgOrder}`);
+    const protocol = protocolFor(model, log);
     try {
       const { firmware } = await protocol.handshake();
-      return new CutterSession(model, transport, protocol, firmware);
+      log.note(`firmware: ${firmware}`);
+      return new CutterSession(model, transport, log, protocol, firmware);
     } catch (e) {
-      await transport.close();
+      log.note(`handshake failed: ${(e as Error).message}`);
+      await log.close();
       throw e;
     }
   }
@@ -66,6 +111,7 @@ export class CutterSession {
   async run(job: CutJob, events: JobEvents = {}, signal?: AbortSignal): Promise<void> {
     if (this.busy) throw new Error("The cutter is already running a job");
     this.busy = true;
+    this.noteJob(job);
     try {
       events.onPhase?.("waiting");
       await this.protocol.waitForReady({
@@ -76,7 +122,15 @@ export class CutterSession {
       });
       events.onPhase?.("setup");
       await this.protocol.setup(job.material);
-      if (job.regmarks) {
+      if (job.regmarks && job.registration === "manual") {
+        if (!events.onManualRegistration) throw new Error("Manual registration needs a UI to position the tool");
+        events.onPhase?.("manualRegmarks");
+        await this.protocol.prepareManualRegmarks(job.regmarks);
+        await events.onManualRegistration(new JogController(this.protocol, this.model, job.regmarks.originXmm, job.regmarks.originYmm));
+        signal?.throwIfAborted();
+        events.onPhase?.("regmarks");
+        await this.protocol.confirmManualRegmarks(job.regmarks);
+      } else if (job.regmarks) {
         events.onPhase?.("regmarks");
         await this.protocol.searchRegmarks(job.regmarks);
       }
@@ -85,7 +139,9 @@ export class CutterSession {
       events.onPhase?.("finishing");
       await this.protocol.finish();
       events.onPhase?.("done");
+      this.log.note("job done");
     } catch (e) {
+      this.log.note(`job failed: ${(e as Error).message}`);
       if (signal?.aborted) {
         try {
           await this.protocol.abort();
@@ -99,7 +155,22 @@ export class CutterSession {
     }
   }
 
+  private noteJob(job: CutJob) {
+    const b = boundingBox(job.paths);
+    const f = job.frame;
+    const r = job.regmarks;
+    this.log.note(
+      [
+        `job: ${job.label ?? "cut"}, ${job.paths.length} paths`,
+        `sheet bbox (${b.minX.toFixed(2)}, ${b.minY.toFixed(2)})-(${b.maxX.toFixed(2)}, ${b.maxY.toFixed(2)}) mm`,
+        `frame offset (${f.offsetXmm}, ${f.offsetYmm}) mm`,
+        r ? `marks ${r.style} ${job.registration ?? "auto"} origin (${r.originXmm}, ${r.originYmm}) size ${r.widthMm.toFixed(2)}x${r.heightMm.toFixed(2)} mm` : "no marks",
+        `material ${job.material.id} p${job.material.pressure} s${job.material.speed} d${job.material.autoBladeDepth}`,
+      ].join("; ")
+    );
+  }
+
   async close(): Promise<void> {
-    await this.transport.close();
+    await this.log.close();
   }
 }

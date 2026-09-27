@@ -122,8 +122,8 @@ export class WebUsbTransport implements Transport {
     return this.queue.take(timeoutMs);
   }
 
-  drain() {
-    this.queue.drain();
+  drain(): Uint8Array[] {
+    return this.queue.drain();
   }
 
   async close(): Promise<void> {

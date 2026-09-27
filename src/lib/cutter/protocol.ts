@@ -43,6 +43,12 @@ export interface CutterProtocol {
   setup(material: CutMaterial): Promise<void>;
   /** Has the cutter optically find the printed marks; afterwards device (0,0) is the top-left mark. */
   searchRegmarks(spec: RegmarkSpec): Promise<void>;
+  /** Manual registration, step 1: configure marks and move the tool to where the top-left mark should be. */
+  prepareManualRegmarks(spec: RegmarkSpec): Promise<void>;
+  /** Tool-up move in media millimetres (before registration). */
+  moveTo(xMm: number, yMm: number): Promise<void>;
+  /** Manual registration, step 2: register from the tool's current position. */
+  confirmManualRegmarks(spec: RegmarkSpec): Promise<void>;
   cut(paths: Contour[], frame: CutFrame, progress?: CutProgress): Promise<void>;
   /** Parks the tool after a job. */
   finish(): Promise<void>;
@@ -59,7 +65,9 @@ export class CutterNotReadyError extends Error {
 
 export class RegmarkNotFoundError extends Error {
   constructor(detail: string) {
-    super(`The cutter couldn't find the registration marks (${detail}). Check the sheet is loaded straight, top-left on the mat, and the marks printed dark and crisp.`);
+    super(
+      `The cutter couldn't find the registration marks (${detail}). Check: the sheet sits in the top-left corner of the mat grid and square to it; the mat is pushed against the left guide as it loads; the marks printed solid matte black. Then send again.`
+    );
     this.name = "RegmarkNotFoundError";
   }
 }

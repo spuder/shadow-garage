@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SHEET_SIZES } from "../sheet";
-import { chunkFrames, frameCommands, homeCommands, mmToSU, parseStatus, pathCommands, regmarkCommands, setupCommands } from "./graphtec";
+import { chunkFrames, frameCommands, homeCommands, manualRegmarkCommand, mmToSU, moveCommand, parseStatus, pathCommands, regmarkCommands, setupCommands } from "./graphtec";
 import { layoutJob, testSquarePaths } from "./job";
 import { WHITE_STICKER_PAPER } from "./materials";
 import { modelById } from "./models";
@@ -68,6 +68,17 @@ describe("Cameo 3 command sequences", () => {
     const { regmarks } = layoutJob(letter, cameo3, "standard");
     // marks 195.9 x 259.4 mm apart, search starting 10mm before the 10mm mark origin
     expect(regmarkCommands(regmarks!)).toEqual(["TB50,0", "TB99", "TB52,2", "TB51,400", "TB53,10", "TB55,1", "TB123,5188,3918,0,0"]);
+  });
+
+  it("can send the mark distances width-first", () => {
+    const { regmarks } = layoutJob(letter, cameo3, "standard");
+    expect(regmarkCommands(regmarks!, "width_height").at(-1)).toBe("TB123,3918,5188,0,0");
+    expect(manualRegmarkCommand(regmarks!, "width_height")).toBe("TB23,3918,5188");
+    expect(manualRegmarkCommand(regmarks!)).toBe("TB23,5188,3918");
+  });
+
+  it("moves with axes swapped", () => {
+    expect(moveCommand(10, 25)).toBe("M500,200");
   });
 
   it("swaps axes: M/D take (down, across)", () => {

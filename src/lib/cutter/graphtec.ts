@@ -11,7 +11,7 @@
 
 import type { Contour } from "../geometry";
 import type { CutMaterial } from "./materials";
-import type { CutterModel } from "./models";
+import type { CutterModel, RegmarkArgOrder } from "./models";
 import {
   CutOutOfBoundsError,
   CutterNotReadyError,
@@ -96,21 +96,39 @@ export function setupCommands(model: CutterModel, material: CutMaterial): string
   ];
 }
 
-/** Registration-mark search (Graphtec.py plot() with regmark=True, regsearch=True). */
-export function regmarkCommands(spec: RegmarkSpec): string[] {
+// Mark type, size and mode setup sent before either kind of mark search.
+const REGMARK_SETUP = [
+  "TB50,0",
+  "TB99",
+  "TB52,2", // mark type: Cameo/Portrait
+  "TB51,400", // mark length
+  "TB53,10", // mark line width
+  "TB55,1",
+];
+
+function regmarkDistances(spec: RegmarkSpec, order: RegmarkArgOrder): string {
+  const h = mmToSU(spec.heightMm);
+  const w = mmToSU(spec.widthMm);
+  return order === "height_width" ? `${h},${w}` : `${w},${h}`;
+}
+
+/** Automatic registration-mark search (Graphtec.py plot() with regmark=True, regsearch=True). */
+export function regmarkCommands(spec: RegmarkSpec, order: RegmarkArgOrder = "height_width"): string[] {
   // Upstream starts the optical search 10mm before where the marks are expected.
   const top = Math.max(spec.originYmm - 10, 0);
   const left = Math.max(spec.originXmm - 10, 0);
   const search = spec.style === "four_corner" ? "TB124" : "TB123";
-  return [
-    "TB50,0",
-    "TB99",
-    "TB52,2", // mark type: Cameo/Portrait
-    "TB51,400", // mark length
-    "TB53,10", // mark line width
-    "TB55,1",
-    `${search},${mmToSU(spec.heightMm)},${mmToSU(spec.widthMm)},${mmToSU(top)},${mmToSU(left)}`,
-  ];
+  return [...REGMARK_SETUP, `${search},${regmarkDistances(spec, order)},${mmToSU(top)},${mmToSU(left)}`];
+}
+
+/** Manual registration: register from wherever the tool was positioned (Graphtec.py's manual_regmark_mm_cmd). */
+export function manualRegmarkCommand(spec: RegmarkSpec, order: RegmarkArgOrder = "height_width"): string {
+  return `TB23,${regmarkDistances(spec, order)}`;
+}
+
+/** Tool-up move to (x, y) mm in screen orientation (axes swapped on the wire). */
+export function moveCommand(xMm: number, yMm: number): string {
+  return `M${mmToSU(yMm)},${mmToSU(xMm)}`;
 }
 
 /** Move/draw commands for each path. Throws rather than silently clipping anything outside the frame. */
@@ -265,9 +283,7 @@ export class GraphtecProtocol implements CutterProtocol {
     await this.send(setupCommands(this.model, material));
   }
 
-  async searchRegmarks(spec: RegmarkSpec): Promise<void> {
-    this.drain();
-    await this.send(regmarkCommands(spec));
+  private async awaitRegistration(): Promise<void> {
     let reply: string;
     try {
       reply = await this.readReply(40_000); // the optical search can take a while
@@ -276,6 +292,27 @@ export class GraphtecProtocol implements CutterProtocol {
       throw e;
     }
     if (reply.trim() !== "0") throw new RegmarkNotFoundError(`reply "${reply}"`);
+  }
+
+  async searchRegmarks(spec: RegmarkSpec): Promise<void> {
+    this.drain();
+    await this.send(regmarkCommands(spec, this.model.regmarkArgOrder));
+    await this.awaitRegistration();
+  }
+
+  async prepareManualRegmarks(spec: RegmarkSpec): Promise<void> {
+    await this.send(REGMARK_SETUP);
+    await this.moveTo(spec.originXmm, spec.originYmm);
+  }
+
+  async moveTo(xMm: number, yMm: number): Promise<void> {
+    await this.send([moveCommand(xMm + this.model.marginLeftMm, yMm + this.model.marginTopMm)]);
+  }
+
+  async confirmManualRegmarks(spec: RegmarkSpec): Promise<void> {
+    this.drain();
+    await this.send([manualRegmarkCommand(spec, this.model.regmarkArgOrder)]);
+    await this.awaitRegistration();
   }
 
   async cut(paths: Contour[], frame: CutFrame, { onProgress, signal }: CutProgress = {}): Promise<void> {

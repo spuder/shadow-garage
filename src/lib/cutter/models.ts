@@ -4,6 +4,8 @@
 // Hardware figures for Silhouette models come from fablabnbg/inkscape-silhouette's Graphtec.py
 // device table (GPL-2.0 — used as a reference for facts about the hardware, not vendored).
 
+export type RegmarkArgOrder = "height_width" | "width_height";
+
 export type ProtocolId = "graphtec-gpgl"; // future: "hpgl" (Roland, USCutter, generic USB-serial vinyl cutters)
 
 export interface CutterModel {
@@ -20,6 +22,12 @@ export interface CutterModel {
   marginTopMm: number;
   /** Which registration-mark layout the optical sensor can read (see src/lib/regmarks.ts). */
   regmarks: "none" | "standard" | "four_corner";
+  /**
+   * Order of the mark-to-mark distances in the mark-search commands (TB123 / TB23). Graphtec.py
+   * sends height first; the Silhouette Studio trace in upstream's Commands.md shows width first.
+   * Which one a model really expects is being confirmed on hardware with the calibration cut.
+   */
+  regmarkArgOrder: RegmarkArgOrder;
   pressureRange: [number, number];
   speedRange: [number, number];
   toolHolders: number;
@@ -39,6 +47,7 @@ export const CUTTER_MODELS: CutterModel[] = [
     marginLeftMm: 0,
     marginTopMm: 0,
     regmarks: "standard",
+    regmarkArgOrder: "height_width",
     pressureRange: [1, 33],
     speedRange: [1, 10],
     toolHolders: 2,

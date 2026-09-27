@@ -114,6 +114,67 @@ describe("CutterSession", () => {
     expect(t.log).not.toContain("L0");
   });
 
+  it("uses the model's mark-distance order in the search", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, { ...cameo3, regmarkArgOrder: "width_height" });
+    await session.run(job(true));
+    expect(t.log).toContain("TB123,3918,5188,0,0");
+  });
+
+  it("registers manually from where the user jogged the blade", async () => {
+    const t = new FakeTransport((w) => (/TB23,[^\x03]*\x03$/.test(w) ? "    0\x03" : cameo3Responder()(w)));
+    const session = await CutterSession.open(t, cameo3);
+    const phases: CutPhase[] = [];
+    await session.run(
+      { ...job(true), registration: "manual" },
+      {
+        onPhase: (p) => phases.push(p),
+        onManualRegistration: async (jog) => {
+          expect([jog.x, jog.y]).toEqual([10, 10]); // starts where the top-left mark should be
+          await jog.move(2, -1);
+          await jog.move(-50, 0); // clamped to the mat edge
+        },
+      }
+    );
+    expect(phases).toContain("manualRegmarks");
+    const log = t.log;
+    expect(log.some((c) => c.startsWith("TB123"))).toBe(false);
+    expect(log.slice(log.indexOf("TB55,1"), log.indexOf("TB23,5188,3918") + 1)).toEqual(["TB55,1", "M200,200", "M180,240", "M180,0", "TB23,5188,3918"]);
+    expect(log.indexOf("TB23,5188,3918")).toBeLessThan(log.indexOf("M600,600"));
+  });
+
+  it("cancelling manual registration cuts nothing", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    const controller = new AbortController();
+    const run = session.run(
+      { ...job(true), registration: "manual" },
+      {
+        onManualRegistration: () => {
+          controller.abort();
+          return Promise.reject(new DOMException("Cancelled", "AbortError"));
+        },
+      },
+      controller.signal
+    );
+    await expect(run).rejects.toThrow("Cancelled");
+    expect(t.log.some((c) => c.startsWith("TB23") || c.startsWith("D"))).toBe(false);
+  });
+
+  it("logs the handshake, job summary, commands and replies", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    await session.run(job(true));
+    const text = session.log.format();
+    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width/);
+    expect(text).toMatch(/-> <ESC EOT>/);
+    expect(text).toMatch(/<- CAMEO V1\.10 {4}\|/);
+    expect(text).toMatch(/## job: cut, 1 paths; sheet bbox \(40\.00, 40\.00\)-\(50\.00, 50\.00\) mm; frame offset \(-10, -10\) mm; marks standard auto/);
+    expect(text).toMatch(/TB123,5188,3918,0,0\|/);
+    expect(text).toMatch(/<- {5}0\|/); // "<- " then the reply "    0"
+    expect(text).toMatch(/## job done/);
+  });
+
   it("closes the transport if the handshake fails", async () => {
     vi.useFakeTimers();
     const t = new FakeTransport(() => null);

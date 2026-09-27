@@ -565,7 +565,30 @@ select {
 }
 .cutter-buttons {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+}
+.cutter-buttons + .cutter-buttons {
+  margin-top: 6px;
+}
+.cutter-manual-btn {
+  margin-top: 8px;
+}
+.jog-pad {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.jog-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  gap: 4px;
+  justify-content: center;
+  margin: 10px 0 4px;
+}
+.jog-grid button {
+  padding: 6px 0;
 }
 .cutter-buttons button {
   white-space: nowrap;

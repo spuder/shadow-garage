@@ -461,3 +461,33 @@ whether ESC EOT (Abort) lifts the blade immediately.
 
 **Noted, out of scope:** the printed PDF includes the red cut line, so any misalignment shows as a
 red edge — a "hide cut lines when printing" option would be a separate small change.
+
+### 11a. First hardware test — marks found, cut scaled down (open)
+
+Real Cameo 3 test: Chrome claimed the device and the automatic mark scan succeeded, but the cut was
+the right shape at about half size or less, narrower more than shorter. The print was at 100% on
+Letter, with Letter selected in the app.
+
+- **Ruled out, app side:** a traced 3.00 in sticker at sheet (30, 30) mm is sent as exactly
+  76.2 mm wide at mark-relative (20, 20). Checked end-to-end in headless Chromium, and now also
+  covered by a unit test in `job.test.ts`. The marks match upstream's renderer geometry exactly,
+  and the command stream matches upstream's transcript. So the scaling happens in the cutter's
+  registration transform (or its units).
+- **Prime suspect:** the order of the mark distances in `TB123` / `TB23`. Graphtec.py sends
+  height first; upstream's `Commands.md` Silhouette Studio trace shows width first. This is now
+  a per-model field (`regmarkArgOrder` in `models.ts`), with a `?regmarkArgs=width_height` URL
+  override for testing. The Cameo 3 keeps upstream's height-first order until hardware says
+  otherwise.
+- **Diagnostics added:**
+  - `LoggingTransport` records every command and reply, keeping the start of the session so long
+    jobs can't push out the handshake and mark search. Replies that arrive but are never read
+    (e.g. the extra ones after a mark search) are logged as "unread". Exposed via **Copy log**.
+  - Calibration sheet + calibration cut (`calibration.ts`): a 140×200 mm printed rectangle and the
+    identical cut, which gives the X/Y scale and offset with a ruler.
+- **Mark misses:** the scan window isn't configurable; the scan looks near where each mark should
+  be. The "marks not found" error now gives a loading checklist. After a miss, an experimental
+  manual registration jogs the blade onto the top-left mark (`M` moves, 1/5 mm steps) and sends
+  `TB23`. Unconfirmed on hardware; drop it if the Cameo 3 doesn't accept it.
+- **Next:** measure the Test cut square (10 mm means units are fine) and the calibration cut
+  with each argument order, then fix `regmarkArgOrder` (or units) for the Cameo 3 and update the
+  golden test to note the deliberate difference from upstream.

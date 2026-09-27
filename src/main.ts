@@ -8,9 +8,13 @@ import { downloadSvgString, exportSvgStringAsPdf } from "./lib/pdfExport";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
+import { buildCalibrationSVG, calibrationPaths } from "./lib/cutter/calibration";
 import { buildCutPaths, CutJobError, layoutJob, testSquarePaths } from "./lib/cutter/job";
 import { WHITE_STICKER_PAPER } from "./lib/cutter/materials";
-import { CutterSession, type CutJob, type CutPhase } from "./lib/cutter/session";
+import type { CutterModel } from "./lib/cutter/models";
+import { RegmarkNotFoundError } from "./lib/cutter/protocol";
+import { CutterSession, type CutJob, type CutPhase, type ManualJog } from "./lib/cutter/session";
+import type { LoggingTransport } from "./lib/cutter/transport";
 import { reconnectUsbCutter, requestUsbCutter, webUsbSupported, WebUsbTransport } from "./lib/cutter/webUsbTransport";
 
 const MM_PER_IN = 25.4;
@@ -19,12 +23,18 @@ const MIN_SIZE_MM = 0.25 * MM_PER_IN;
 type Tab = "design" | "sheet";
 type FillMode = "single" | "fill";
 
+type CutKind = "sheet" | "test" | "calibration";
+
 interface CutterUiState {
   session: CutterSession | null;
   connecting: boolean;
   job: AbortController | null; // set while a cut is running
   statusText: string | null; // job progress / result; null shows the connection summary
   error: string | null;
+  log: LoggingTransport | null; // kept after disconnecting so it can still be copied
+  manualRetryKind: CutKind | null; // set when the mark search failed, to offer manual registration
+  jog: { jog: ManualJog; resolve: () => void; reject: (e: Error) => void } | null; // manual registration in progress
+  jogStepMm: 1 | 5;
 }
 
 interface StickerDesign {
@@ -81,7 +91,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
-  cutter: { session: null, connecting: false, job: null, statusText: null, error: null },
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1 },
 };
 
 applyTheme(state.theme);
@@ -133,6 +143,15 @@ const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement
 const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
 const cutterTestBtn = document.getElementById("cutterTestBtn") as HTMLButtonElement;
 const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
+const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
+const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
+const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
+const manualRegBtn = document.getElementById("manualRegBtn") as HTMLButtonElement;
+const jogPad = document.getElementById("jogPad") as HTMLDivElement;
+const jogStepBtn = document.getElementById("jogStepBtn") as HTMLButtonElement;
+const jogPosEl = document.getElementById("jogPos") as HTMLDivElement;
+const jogRegisterBtn = document.getElementById("jogRegisterBtn") as HTMLButtonElement;
+const jogCancelBtn = document.getElementById("jogCancelBtn") as HTMLButtonElement;
 
 const zoomOutBtn = document.getElementById("zoomOutBtn") as HTMLButtonElement;
 const zoomInBtn = document.getElementById("zoomInBtn") as HTMLButtonElement;
@@ -886,6 +905,7 @@ const CUT_PHASE_TEXT: Record<CutPhase, string> = {
   waiting: "Checking the cutter…",
   loadMat: "Load the mat into the cutter…",
   setup: "Setting up the blade…",
+  manualRegmarks: "Manual registration — position the blade",
   regmarks: "Finding registration marks…",
   cutting: "Cutting…",
   finishing: "Finishing…",
@@ -910,6 +930,15 @@ function renderCutter() {
   cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
   cutterConnectBtn.disabled = !supported || c.connecting || running;
   cutterTestBtn.disabled = !c.session || running;
+  calCutBtn.disabled = !c.session || running;
+  copyLogBtn.disabled = !c.log;
+  manualRegBtn.hidden = !c.manualRetryKind || !c.session || running;
+
+  jogPad.hidden = !c.jog;
+  if (c.jog) {
+    jogStepBtn.textContent = `${c.jogStepMm} mm`;
+    jogPosEl.textContent = `Blade at ${c.jog.jog.x.toFixed(1)}, ${c.jog.jog.y.toFixed(1)} mm from the mat corner`;
+  }
 
   cutterErrorEl.hidden = !c.error;
   cutterErrorEl.textContent = c.error ?? "";
@@ -927,7 +956,11 @@ async function connectCutter() {
   try {
     // Reuse a cutter this site was already granted, so there's no picker after the first time.
     const conn = (await reconnectUsbCutter()) ?? (await requestUsbCutter());
-    if (conn) c.session = await CutterSession.open(conn.transport, conn.model);
+    if (conn) {
+      c.session = await CutterSession.open(conn.transport, withDiagnosticOverrides(conn.model));
+      c.log = c.session.log;
+      c.manualRetryKind = null;
+    }
   } catch (e) {
     c.error = errorText(e);
   } finally {
@@ -944,27 +977,51 @@ async function disconnectCutter() {
   await session?.close();
 }
 
-/** The whole sheet as laid out in Sheet Preview (what the PDF prints), or a test square on a scrap sheet. */
-function buildCutJob(session: CutterSession, kind: "sheet" | "test"): CutJob {
+/**
+ * Diagnostic override while print-and-cut scaling is being confirmed on hardware: ?regmarkArgs=width_height
+ * (or height_width) swaps the order of the mark distances sent in the mark search. Recorded in the log.
+ */
+function withDiagnosticOverrides(model: CutterModel): CutterModel {
+  const order = new URLSearchParams(location.search).get("regmarkArgs");
+  return order === "width_height" || order === "height_width" ? { ...model, regmarkArgOrder: order } : model;
+}
+
+/**
+ * The whole sheet as laid out in Sheet Preview (what the PDF prints), a test square on a scrap sheet
+ * (no marks), or the calibration target (always with marks — it's for checking print-and-cut).
+ */
+function buildCutJob(session: CutterSession, kind: CutKind): CutJob {
   const sheet = currentSheet();
   if (kind === "test") {
-    return { paths: testSquarePaths(), ...layoutJob(sheet, session.model, false), material: WHITE_STICKER_PAPER };
+    return { label: "test square", paths: testSquarePaths(), ...layoutJob(sheet, session.model, false), material: WHITE_STICKER_PAPER };
+  }
+  if (kind === "calibration") {
+    return { label: "calibration", paths: calibrationPaths(sheet), ...layoutJob(sheet, session.model, state.regmarkStyle), material: WHITE_STICKER_PAPER };
   }
   const layout = layoutJob(sheet, session.model, currentRegmarkStyle());
   const { items } = computeSheetItems(sheet);
   if (items.length === 0) throw new CutJobError("Nothing fits on the sheet to cut.");
-  return { paths: buildCutPaths(items), ...layout, material: WHITE_STICKER_PAPER };
+  return { label: "sheet", paths: buildCutPaths(items), ...layout, material: WHITE_STICKER_PAPER };
 }
 
-async function runCutterJob(kind: "sheet" | "test") {
+/** Shows the jog pad and waits until the user registers (resolve) or cancels (reject). */
+function waitForManualRegistration(jog: ManualJog): Promise<void> {
+  return new Promise((resolve, reject) => {
+    state.cutter.jog = { jog, resolve, reject };
+    renderCutter();
+  });
+}
+
+async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "auto") {
   const c = state.cutter;
   const session = c.session;
   if (!session || c.job) return;
   c.error = null;
+  c.manualRetryKind = null;
 
   let job: CutJob;
   try {
-    job = buildCutJob(session, kind);
+    job = { ...buildCutJob(session, kind), registration };
   } catch (e) {
     c.error = errorText(e);
     renderCutter();
@@ -990,16 +1047,25 @@ async function runCutterJob(kind: "sheet" | "test") {
           c.statusText = `Cutting… ${Math.round(f * 100)}%`;
           renderCutter();
         },
+        onManualRegistration: waitForManualRegistration,
       },
       controller.signal
     );
   } catch (e) {
     c.statusText = controller.signal.aborted ? "Aborted" : null;
     if (!controller.signal.aborted) c.error = errorText(e);
+    if (e instanceof RegmarkNotFoundError && registration === "auto") c.manualRetryKind = kind;
   } finally {
     c.job = null;
+    c.jog = null;
     renderCutter();
   }
+}
+
+function abortCutterJob() {
+  const c = state.cutter;
+  c.job?.abort();
+  c.jog?.reject(new DOMException("Cancelled", "AbortError"));
 }
 
 cutterConnectBtn.addEventListener("click", () => {
@@ -1008,9 +1074,72 @@ cutterConnectBtn.addEventListener("click", () => {
 });
 
 cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
+calCutBtn.addEventListener("click", () => void runCutterJob("calibration"));
+
+calSheetBtn.addEventListener("click", async () => {
+  calSheetBtn.disabled = true;
+  try {
+    const sheet = currentSheet();
+    await exportSvgStringAsPdf(buildCalibrationSVG(sheet, state.regmarkStyle), sheet.widthMm, sheet.heightMm, `cutter-calibration-${sheet.name.toLowerCase()}.pdf`);
+  } finally {
+    calSheetBtn.disabled = false;
+  }
+});
+
+copyLogBtn.addEventListener("click", async () => {
+  const log = state.cutter.log;
+  if (!log) return;
+  const text = `Shadow Garage cutter log, ${new Date().toISOString()}\n${navigator.userAgent}\n${location.href}\n\n${log.format()}\n`;
+  try {
+    await navigator.clipboard.writeText(text);
+    copyLogBtn.textContent = "Copied";
+  } catch {
+    // Clipboard blocked: fall back to downloading it.
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "cutter-log.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+    copyLogBtn.textContent = "Downloaded";
+  }
+  setTimeout(() => (copyLogBtn.textContent = "Copy log"), 1500);
+});
+
+manualRegBtn.addEventListener("click", () => {
+  const kind = state.cutter.manualRetryKind;
+  if (kind) void runCutterJob(kind, "manual");
+});
+
+jogPad.addEventListener("click", async (e) => {
+  const btn = (e.target as HTMLElement).closest("button[data-jog]") as HTMLButtonElement | null;
+  const c = state.cutter;
+  if (!btn || !c.jog) return;
+  const [dx, dy] = btn.dataset.jog!.split(",").map(Number);
+  try {
+    await c.jog.jog.move(dx * c.jogStepMm, dy * c.jogStepMm);
+  } catch (err) {
+    c.error = errorText(err);
+  }
+  renderCutter();
+});
+
+jogStepBtn.addEventListener("click", () => {
+  state.cutter.jogStepMm = state.cutter.jogStepMm === 1 ? 5 : 1;
+  renderCutter();
+});
+
+jogRegisterBtn.addEventListener("click", () => {
+  const jog = state.cutter.jog;
+  state.cutter.jog = null;
+  jog?.resolve();
+  renderCutter();
+});
+
+jogCancelBtn.addEventListener("click", abortCutterJob);
 
 sendToCutterBtn.addEventListener("click", () => {
-  if (state.cutter.job) state.cutter.job.abort();
+  if (state.cutter.job) abortCutterJob();
   else void runCutterJob("sheet");
 });
 
@@ -1018,7 +1147,7 @@ if (webUsbSupported()) {
   navigator.usb.addEventListener("disconnect", (e) => {
     const session = state.cutter.session;
     if (!session || !(session.transport instanceof WebUsbTransport) || session.transport.device !== e.device) return;
-    state.cutter.job?.abort();
+    abortCutterJob();
     state.cutter.session = null;
     state.cutter.statusText = null;
     state.cutter.error = "The cutter was unplugged.";

@@ -123,9 +123,30 @@
               <div class="cutter-buttons">
                 <button id="cutterConnectBtn" class="btn-secondary small">Connect</button>
                 <button id="cutterTestBtn" class="btn-secondary small" disabled>Test cut</button>
+                <button id="copyLogBtn" class="btn-secondary small" disabled>Copy log</button>
               </div>
-              <div class="hint-text">Silhouette Cameo 3 over USB · White sticker paper · AutoBlade. Cuts the sheet as laid out in Sheet Preview; test cut is a 10&nbsp;mm square for a scrap sheet.</div>
+              <div class="cutter-buttons">
+                <button id="calSheetBtn" class="btn-secondary small">Calibration sheet</button>
+                <button id="calCutBtn" class="btn-secondary small" disabled>Calibration cut</button>
+              </div>
+              <div class="hint-text">Silhouette Cameo 3 over USB · White sticker paper · AutoBlade. Cuts the sheet as laid out in Sheet Preview. Test cut is a 10&nbsp;mm square on scrap (no marks). To check print-and-cut alignment, print the calibration sheet at 100% and run the calibration cut on it.</div>
               <div id="cutterError" class="hint-text cutter-error" hidden></div>
+              <button id="manualRegBtn" class="btn-secondary small cutter-manual-btn" hidden>Try manual registration (experimental)</button>
+              <div id="jogPad" class="jog-pad" hidden>
+                <div class="hint-text">Move the blade over the corner of the top-left black square, then press Register.</div>
+                <div class="jog-grid">
+                  <span></span><button class="btn-secondary small" data-jog="0,-1" aria-label="Up">&#8593;</button><span></span>
+                  <button class="btn-secondary small" data-jog="-1,0" aria-label="Left">&#8592;</button>
+                  <button id="jogStepBtn" class="btn-secondary small" title="Step size">1 mm</button>
+                  <button class="btn-secondary small" data-jog="1,0" aria-label="Right">&#8594;</button>
+                  <span></span><button class="btn-secondary small" data-jog="0,1" aria-label="Down">&#8595;</button><span></span>
+                </div>
+                <div id="jogPos" class="hint-text"></div>
+                <div class="cutter-buttons">
+                  <button id="jogRegisterBtn" class="btn-primary small">Register here</button>
+                  <button id="jogCancelBtn" class="btn-secondary small">Cancel</button>
+                </div>
+              </div>
             </div>
           </div>
 

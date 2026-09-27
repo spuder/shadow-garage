@@ -8,8 +8,8 @@ export interface Transport {
   write(bytes: Uint8Array): Promise<void>;
   /** Resolves with the next chunk of received bytes (at least one byte), or rejects with TransportTimeoutError. */
   read(timeoutMs: number): Promise<Uint8Array>;
-  /** Discards any received-but-unread bytes (stale replies, spurious diagnostics). */
-  drain(): void;
+  /** Discards any received-but-unread bytes (stale replies, spurious diagnostics), returning them for logging. */
+  drain(): Uint8Array[];
   close(): Promise<void>;
 }
 
@@ -58,8 +58,10 @@ export class ByteQueue {
     }
   }
 
-  drain() {
+  drain(): Uint8Array[] {
+    const dropped = this.chunks;
     this.chunks = [];
+    return dropped;
   }
 
   take(timeoutMs: number): Promise<Uint8Array> {
@@ -82,5 +84,103 @@ export class ByteQueue {
         },
       };
     });
+  }
+}
+
+export interface LogEntry {
+  t: number; // ms since the log started
+  kind: "out" | "in" | "dropped" | "note";
+  text: string;
+}
+
+/** Makes raw protocol bytes readable: ETX shown as "|", ESC sequences and other control bytes named. */
+export function printable(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    if (b === 0x1b && i + 1 < bytes.length) {
+      const code = bytes[++i];
+      out += code === 0x04 ? "<ESC EOT>" : code === 0x05 ? "<ESC ENQ>" : `<ESC ${code.toString(16).padStart(2, "0")}>`;
+    } else if (b === 0x03) out += "|";
+    else if (b < 0x20 || b > 0x7e) out += `<${b.toString(16).padStart(2, "0")}>`;
+    else out += String.fromCharCode(b);
+  }
+  return out;
+}
+
+/**
+ * Records everything sent to and received from the cutter, for diagnosing hardware behaviour.
+ * Keeps the first HEAD entries for good (handshake, setup, mark search are the interesting part)
+ * plus the most recent TAIL, so a long cut's status polling can't push them out.
+ */
+export class LoggingTransport implements Transport {
+  static readonly HEAD = 400;
+  static readonly TAIL = 1600;
+
+  private readonly inner: Transport;
+  private readonly start = Date.now();
+  private readonly head: LogEntry[] = [];
+  private tail: LogEntry[] = [];
+  private omitted = 0;
+
+  constructor(inner: Transport) {
+    this.inner = inner;
+  }
+
+  get label(): string {
+    return this.inner.label;
+  }
+
+  private add(kind: LogEntry["kind"], text: string) {
+    const entry = { t: Date.now() - this.start, kind, text };
+    if (this.head.length < LoggingTransport.HEAD) {
+      this.head.push(entry);
+      return;
+    }
+    this.tail.push(entry);
+    if (this.tail.length > LoggingTransport.TAIL) {
+      this.tail = this.tail.slice(-LoggingTransport.TAIL);
+      this.omitted++;
+    }
+  }
+
+  note(text: string) {
+    this.add("note", text);
+  }
+
+  async write(bytes: Uint8Array): Promise<void> {
+    this.add("out", printable(bytes));
+    await this.inner.write(bytes);
+  }
+
+  async read(timeoutMs: number): Promise<Uint8Array> {
+    const bytes = await this.inner.read(timeoutMs);
+    this.add("in", printable(bytes));
+    return bytes;
+  }
+
+  drain(): Uint8Array[] {
+    const dropped = this.inner.drain();
+    for (const b of dropped) this.add("dropped", printable(b));
+    return dropped;
+  }
+
+  close(): Promise<void> {
+    this.note("connection closed");
+    return this.inner.close();
+  }
+
+  entries(): LogEntry[] {
+    return [...this.head, ...this.tail];
+  }
+
+  /** Plain-text log, one line per entry, for pasting into a bug report. */
+  format(): string {
+    const arrow = { out: "->", in: "<-", dropped: "<- (unread)", note: "##" };
+    const line = (e: LogEntry) => `${(e.t / 1000).toFixed(3).padStart(9)}s ${arrow[e.kind]} ${e.text}`;
+    const lines = this.head.map(line);
+    if (this.omitted > 0) lines.push(`... ${this.omitted} entries omitted ...`);
+    lines.push(...this.tail.map(line));
+    return lines.join("\n");
   }
 }
