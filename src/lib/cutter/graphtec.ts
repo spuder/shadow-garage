@@ -184,6 +184,8 @@ export function parseStatus(reply: string): CutterStatus {
       return "moving";
     case "2":
       return "unloaded";
+    case "3":
+      return "paused"; // observed on a Cameo 3 after pressing Pause on its screen, until Resume
     default:
       return "unknown";
   }
@@ -268,14 +270,17 @@ export class GraphtecProtocol implements CutterProtocol {
   }
 
   async waitForReady({ timeoutMs, pollMs, onStatus, signal }: WaitOptions): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
+    let deadline = Date.now() + timeoutMs;
     let last: CutterStatus = "unknown";
     for (;;) {
       signal?.throwIfAborted();
       last = await this.status();
       onStatus?.(last);
       if (last === "ready") return;
-      if (Date.now() >= deadline) break;
+      // Only give up when nothing is happening: one packet of a slow cut can run well past the
+      // timeout, and a pause on the cutter lasts as long as the user wants.
+      if (last === "moving" || last === "paused") deadline = Date.now() + timeoutMs;
+      else if (Date.now() >= deadline) break;
       await sleep(pollMs, signal);
     }
     throw new CutterNotReadyError(
@@ -325,7 +330,7 @@ export class GraphtecProtocol implements CutterProtocol {
     await this.awaitRegistration();
   }
 
-  async cut(paths: Contour[], frame: CutFrame, { onProgress, signal, bladeUp, onPacket }: CutProgress = {}): Promise<void> {
+  async cut(paths: Contour[], frame: CutFrame, { onProgress, signal, bladeUp, onPacket, onStatus }: CutProgress = {}): Promise<void> {
     if (bladeUp) {
       // Dry run: one move at a time, waiting for the carriage to stop before the next. Sent as one
       // packet of back-to-back M moves, a real Cameo 3 traced only the first outline and silently
@@ -335,7 +340,7 @@ export class GraphtecProtocol implements CutterProtocol {
         signal?.throwIfAborted();
         onPacket?.(i + 1, moves.length, moves[i]);
         await this.transport.write(frameCommands([moves[i]]));
-        await this.waitForReady({ timeoutMs: 120_000, pollMs: 50, signal });
+        await this.waitForReady({ timeoutMs: 120_000, pollMs: 50, signal, onStatus });
         onProgress?.((i + 1) / moves.length);
       }
       return;
@@ -346,7 +351,7 @@ export class GraphtecProtocol implements CutterProtocol {
       onPacket?.(i + 1, chunks.length, decoder.decode(chunks[i].subarray(0, chunks[i].indexOf(ETX))));
       await this.transport.write(chunks[i]);
       // Don't overrun the cutter's buffer: let it work through each packet before sending the next.
-      await this.waitForReady({ timeoutMs: 120_000, pollMs: 50, signal });
+      await this.waitForReady({ timeoutMs: 120_000, pollMs: 50, signal, onStatus });
       onProgress?.((i + 1) / chunks.length);
     }
   }

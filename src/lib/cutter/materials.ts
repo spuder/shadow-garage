@@ -26,15 +26,16 @@ export const STICKER_PAPER: CutMaterial = {
 };
 
 // Plain 20 lb (75 g/m²) copy/printer paper: cut all the way through (there's no backing).
-// Based on inkscape-silhouette's "Print Paper Light Weight" (media 132, pressure 5), raised to 10
-// with the blade out to 2 so it reliably cuts through rather than scoring, and slowed to 3: at
-// higher speeds plain paper tore and the carriage bound up and lost position on the Cameo 3.
-// Untested starting values — check with Test cut.
+// Based on inkscape-silhouette's "Print Paper Light Weight" (media 132, pressure 5), with the blade
+// out to 2 so it cuts through rather than scoring, and slowed to 3: at higher speeds plain paper
+// tore and the carriage bound up. Pressure 10 skipped partway down the sheet on a Cameo 3 while a
+// blade-up dry run of the same sheet was clean, so the blade was dragging; 6 is the new, untested
+// start. Tune it with the Pressure slider and Test cut.
 export const PRINTER_PAPER_20LB: CutMaterial = {
   id: "printer-paper-20lb",
   name: "20 lb printer paper",
   mediaId: 132,
-  pressure: 10,
+  pressure: 6,
   speed: 3,
   autoBladeDepth: 2,
 };

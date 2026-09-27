@@ -108,10 +108,16 @@ export function printable(bytes: Uint8Array): string {
   return out;
 }
 
+const STATUS_QUERY = "<ESC ENQ>";
+
 /**
  * Records everything sent to and received from the cutter, for diagnosing hardware behaviour.
  * Keeps the first HEAD entries for good (handshake, setup, mark search are the interesting part)
  * plus the most recent TAIL, so a long cut's status polling can't push them out.
+ *
+ * Back-to-back status polls with the same reply are counted rather than logged one by one: a cut
+ * polls every 50 ms, so an 80 s packet would otherwise add ~1,600 identical lines. The first poll
+ * and every change of status are still logged in full.
  */
 export class LoggingTransport implements Transport {
   static readonly HEAD = 400;
@@ -122,6 +128,11 @@ export class LoggingTransport implements Transport {
   private readonly head: LogEntry[] = [];
   private tail: LogEntry[] = [];
   private omitted = 0;
+  /** A status query waiting for its reply, which decides whether it's logged or counted. */
+  private pendingPoll: LogEntry | null = null;
+  /** The reply of the last status poll logged in full, while nothing else has happened since. */
+  private lastPollReply: string | null = null;
+  private repeats = { count: 0, from: 0, to: 0 };
 
   constructor(inner: Transport) {
     this.inner = inner;
@@ -131,8 +142,11 @@ export class LoggingTransport implements Transport {
     return this.inner.label;
   }
 
-  private add(kind: LogEntry["kind"], text: string) {
-    const entry = { t: Date.now() - this.start, kind, text };
+  private now(): number {
+    return Date.now() - this.start;
+  }
+
+  private record(entry: LogEntry) {
     if (this.head.length < LoggingTransport.HEAD) {
       this.head.push(entry);
       return;
@@ -144,18 +158,73 @@ export class LoggingTransport implements Transport {
     }
   }
 
+  private repeatSummary(): LogEntry | null {
+    const { count, from, to } = this.repeats;
+    if (count === 0 || this.lastPollReply === null) return null;
+    const reply = this.lastPollReply.replace(/\|$/, "");
+    return { t: to, kind: "note", text: `status ${reply} repeated ${count} more time${count === 1 ? "" : "s"} over ${((to - from) / 1000).toFixed(1)} s` };
+  }
+
+  private flushRepeats() {
+    const summary = this.repeatSummary();
+    if (summary) this.record(summary);
+    this.repeats = { count: 0, from: 0, to: 0 };
+  }
+
+  /** Something other than a repeated status poll happened: log any counted run and the pending query. */
+  private endPollRun() {
+    this.flushRepeats();
+    if (this.pendingPoll) this.record(this.pendingPoll);
+    this.pendingPoll = null;
+    this.lastPollReply = null;
+  }
+
+  private add(kind: LogEntry["kind"], text: string) {
+    this.endPollRun();
+    this.record({ t: this.now(), kind, text });
+  }
+
   note(text: string) {
     this.add("note", text);
   }
 
   async write(bytes: Uint8Array): Promise<void> {
-    this.add("out", printable(bytes));
+    const text = printable(bytes);
+    if (text === STATUS_QUERY) {
+      if (this.pendingPoll) this.endPollRun(); // the previous query never got a reply
+      this.pendingPoll = { t: this.now(), kind: "out", text };
+    } else {
+      this.add("out", text);
+    }
     await this.inner.write(bytes);
   }
 
   async read(timeoutMs: number): Promise<Uint8Array> {
-    const bytes = await this.inner.read(timeoutMs);
-    this.add("in", printable(bytes));
+    let bytes: Uint8Array;
+    try {
+      bytes = await this.inner.read(timeoutMs);
+    } catch (e) {
+      this.endPollRun();
+      throw e;
+    }
+    const text = printable(bytes);
+    const poll = this.pendingPoll;
+    if (!poll) {
+      this.add("in", text);
+      return bytes;
+    }
+    this.pendingPoll = null;
+    const t = this.now();
+    if (text === this.lastPollReply) {
+      if (this.repeats.count === 0) this.repeats.from = poll.t;
+      this.repeats.count++;
+      this.repeats.to = t;
+      return bytes;
+    }
+    this.flushRepeats();
+    this.record(poll);
+    this.record({ t, kind: "in", text });
+    this.lastPollReply = text;
     return bytes;
   }
 
@@ -170,8 +239,14 @@ export class LoggingTransport implements Transport {
     return this.inner.close();
   }
 
+  /** Entries not yet recorded: a run of repeated polls still being counted, and a query awaiting its reply. */
+  private inProgress(): LogEntry[] {
+    const summary = this.repeatSummary();
+    return [...(summary ? [summary] : []), ...(this.pendingPoll ? [this.pendingPoll] : [])];
+  }
+
   entries(): LogEntry[] {
-    return [...this.head, ...this.tail];
+    return [...this.head, ...this.tail, ...this.inProgress()];
   }
 
   /** Plain-text log, one line per entry, for pasting into a bug report. */
@@ -180,7 +255,7 @@ export class LoggingTransport implements Transport {
     const line = (e: LogEntry) => `${(e.t / 1000).toFixed(3).padStart(9)}s ${arrow[e.kind]} ${e.text}`;
     const lines = this.head.map(line);
     if (this.omitted > 0) lines.push(`... ${this.omitted} entries omitted ...`);
-    lines.push(...this.tail.map(line));
+    lines.push(...this.tail.map(line), ...this.inProgress().map(line));
     return lines.join("\n");
   }
 }

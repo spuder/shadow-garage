@@ -18,6 +18,40 @@ describe("LoggingTransport", () => {
     expect(log.format()).toMatch(/<- \(unread\) {5}1\|/);
   });
 
+  it("counts repeated status polls instead of logging each one", async () => {
+    const replies = ["1", "1", "1", "1", "3", "3", "0"];
+    const log = new LoggingTransport(new FakeTransport((w) => (w === "\x1b\x05" ? replies.shift()! + "\x03" : null)));
+    for (let i = 0; i < 7; i++) {
+      await log.write(new Uint8Array([0x1b, 0x05]));
+      await log.read(100);
+    }
+    const lines = log.entries().map((e) => `${e.kind} ${e.text}`);
+    expect(lines).toEqual([
+      "out <ESC ENQ>",
+      "in 1|",
+      "note status 1 repeated 3 more times over 0.0 s",
+      "out <ESC ENQ>",
+      "in 3|",
+      "note status 3 repeated 1 more time over 0.0 s",
+      "out <ESC ENQ>",
+      "in 0|",
+    ]);
+  });
+
+  it("shows a run of polls still being counted, and starts afresh after anything else", async () => {
+    const log = new LoggingTransport(new FakeTransport((w) => (w === "\x1b\x05" ? "1\x03" : null)));
+    const poll = async () => {
+      await log.write(new Uint8Array([0x1b, 0x05]));
+      await log.read(100);
+    };
+    await poll();
+    await poll();
+    expect(log.format()).toMatch(/## status 1 repeated 1 more time/);
+    log.note("packet 2/2");
+    await poll();
+    expect(log.entries().map((e) => e.text)).toEqual(["<ESC ENQ>", "1|", "status 1 repeated 1 more time over 0.0 s", "packet 2/2", "<ESC ENQ>", "1|"]);
+  });
+
   it("keeps the start of the session when a long job overflows the log", async () => {
     const log = new LoggingTransport(new FakeTransport(() => null));
     log.note("handshake");

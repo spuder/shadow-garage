@@ -5,11 +5,21 @@ import type { Contour } from "../geometry";
 import { GraphtecProtocol } from "./graphtec";
 import type { CutMaterial } from "./materials";
 import type { CutterModel } from "./models";
-import { RegmarkNotFoundError, type CutFrame, type CutterProtocol, type RegmarkSpec } from "./protocol";
+import { RegmarkNotFoundError, type CutFrame, type CutterProtocol, type CutterStatus, type RegmarkSpec } from "./protocol";
 import { boundingBox, simplify } from "../geometry";
 import { LoggingTransport, type Transport } from "./transport";
 
-export type CutPhase = "waiting" | "loadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
+export type CutPhase =
+  | "waiting"
+  | "loadMat"
+  | "homing"
+  | "setup"
+  | "manualRegmarks"
+  | "regmarks"
+  | "cutting"
+  | "paused"
+  | "finishing"
+  | "done";
 
 export interface CutJob {
   paths: Contour[]; // sheet millimetres
@@ -154,6 +164,19 @@ export class CutterSession {
         await this.searchWithRetries(job.regmarks, events, signal);
       }
       events.onPhase?.("cutting");
+      // Pause on the cutter's own screen shows up as status "paused" until Resume.
+      let paused = false;
+      const onStatus = (s: CutterStatus) => {
+        if (s === "paused" && !paused) {
+          paused = true;
+          this.log.note("paused on the cutter");
+          events.onPhase?.("paused");
+        } else if (s !== "paused" && paused) {
+          paused = false;
+          this.log.note("resumed");
+          events.onPhase?.("cutting");
+        }
+      };
       // A dry run sends one move at a time (see GraphtecProtocol.cut), so trace each outline
       // simplified to within DRY_RUN_TOLERANCE_MM: traced outlines have hundreds of points, which
       // would make a full-sheet dry run take the better part of an hour.
@@ -165,6 +188,7 @@ export class CutterSession {
         bladeUp: job.dryRun,
         // Marks where each packet starts, to check whether a mid-job shift lines up with one.
         onPacket: (i, of, first) => this.log.note(`packet ${i}/${of} starts at ${first}`),
+        onStatus,
       });
       events.onPhase?.("finishing");
       await this.protocol.finish();

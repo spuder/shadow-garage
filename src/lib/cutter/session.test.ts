@@ -297,6 +297,23 @@ describe("manual registration", () => {
   });
 });
 
+describe("pause on the cutter", () => {
+  it("shows the pause, then carries on when the cutter resumes", async () => {
+    vi.useFakeTimers();
+    // One "0" for the check before the job, then the cut: moving, paused, moving, done.
+    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "1", "3", "3", "3", "1", "0"] }));
+    const session = await CutterSession.open(t, cameo3);
+    const phases: CutPhase[] = [];
+    const run = session.run(job(false), { onPhase: (p) => phases.push(p) });
+    await vi.advanceTimersByTimeAsync(5000);
+    await run;
+    expect(phases.slice(phases.indexOf("cutting"))).toEqual(["cutting", "paused", "cutting", "finishing", "done"]);
+    const text = session.log.format();
+    expect(text.match(/## paused on the cutter/g)).toHaveLength(1);
+    expect(text.match(/## resumed/g)).toHaveLength(1);
+  });
+});
+
 describe("abort, log and diagnostics", () => {
   it("logs where each packet of the cut starts", async () => {
     const t = new FakeTransport(cameo3Responder());

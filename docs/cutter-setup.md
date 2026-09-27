@@ -11,12 +11,16 @@ settings (shown in the Cutter panel):
 | Paper type | Cut | Pressure | Speed | Blade |
 |---|---|---|---|---|
 | Adhesive sticker sheets (white, clear) | kiss cut, backing left intact | 20 | 5 | 1 |
-| 20 lb printer paper (no adhesive) | cut all the way through | 10 | 3 | 2 |
+| 20 lb printer paper (no adhesive) | cut all the way through | 6 | 3 | 2 |
 
 All of these are starting values, not yet tuned on hardware. Run **Test cut** on a scrap of the
-same stock first. The **Speed** slider in the Cutter panel overrides the paper type's speed
-(it resets when you pick another paper type); slower is safer — at speed 10 the Cameo 3 bound up
-and shifted jobs.
+same stock first. The **Speed** and **Pressure** sliders in the Cutter panel override the paper
+type's values (they reset when you pick another paper type). Slower is safer: at speed 10 the
+Cameo 3 bound up and shifted jobs. Use the lowest pressure that still cuts through: too much drags
+the blade through the mat and makes the mat skip.
+
+Pausing on the cutter's own screen is safe: the app shows the pause, waits for as long as it
+lasts, and carries on when you press **Resume** (or press **Abort** in the app to stop).
 
 ## macOS
 
@@ -94,12 +98,14 @@ rather than move everything after it.
    slipped in the rollers.
 2. **Slow down.** Lower the **Speed** slider (try 3) and run it again. Binding up at speed is the
    most common cause.
-3. **Run Dry run** on the same sheet. The blade stays up, so nothing drags. If the trace doesn't
-   shift, the blade catching the paper is the cause: lower the speed or pressure, or pick the
-   right paper type (**20 lb printer paper** for plain paper). If it still shifts, look at the
-   machine and mat.
+3. **Run Dry run** on the same sheet. The blade stays up, so nothing drags. If the trace is clean
+   but the real cut skips, the blade is dragging: lower **Pressure** a step at a time (plain
+   paper 6 → 5 → 4, stickers 20 → 16 → 12) and check with **Test cut** that it still cuts
+   through. Also check the paper type matches the stock (**20 lb printer paper** for plain paper).
+   If the dry run shifts too, look at the machine and mat.
 4. **Check the mat:** still tacky, pushed against the left guide as it loads, gripped by both
-   pinch rollers, with clear space behind the cutter for it to travel.
+   pinch rollers (the right roller set to the 12 in mat position), with clear space behind the
+   cutter for it to travel.
 5. **Send Copy log.** It marks where each packet of the job starts (`## packet 3/7 starts at …`),
    which shows whether a shift lines up with the start of a packet.
 

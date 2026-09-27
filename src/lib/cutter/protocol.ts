@@ -5,7 +5,8 @@ import type { CutMaterial } from "./materials";
 // future: HPGL for Roland / generic vinyl cutters). Everything above this (session.ts, the UI) is
 // protocol-agnostic.
 
-export type CutterStatus = "ready" | "moving" | "unloaded" | "unknown";
+/** "paused": someone pressed Pause on the cutter itself (a Cameo 3 reports "3" until Resume). */
+export type CutterStatus = "ready" | "moving" | "unloaded" | "paused" | "unknown";
 
 /** Registration marks as printed on the sheet (see src/lib/regmarks.ts), in sheet millimetres. */
 export interface RegmarkSpec {
@@ -30,9 +31,12 @@ export interface CutProgress {
   bladeUp?: boolean;
   /** Called as each packet of the job is sent (1-based), with the packet's first command. */
   onPacket?: (packet: number, of: number, firstCommand: string) => void;
+  /** Every status polled while waiting for the cutter to work through what was sent. */
+  onStatus?: (status: CutterStatus) => void;
 }
 
 export interface WaitOptions {
+  /** Give up after this long without progress; time spent moving or paused doesn't count. */
   timeoutMs: number;
   pollMs: number;
   onStatus?: (status: CutterStatus) => void;

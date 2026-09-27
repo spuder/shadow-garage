@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SHEET_SIZES } from "../sheet";
-import { chunkFrames, frameCommands, homeCommands, manualRegmarkCommand, mmToSU, moveCommand, parseStatus, pathCommands, regmarkCommands, setupCommands } from "./graphtec";
+import { cameo3Responder, FakeTransport } from "./fakeTransport";
+import { chunkFrames, frameCommands, GraphtecProtocol, homeCommands, manualRegmarkCommand, mmToSU, moveCommand, parseStatus, pathCommands, regmarkCommands, setupCommands } from "./graphtec";
 import { layoutJob, testSquarePaths } from "./job";
 import { STICKER_PAPER } from "./materials";
 import { modelById } from "./models";
-import { CutOutOfBoundsError, type CutFrame } from "./protocol";
+import { CutOutOfBoundsError, CutterNotReadyError, type CutFrame, type CutterStatus } from "./protocol";
 
 const cameo3 = modelById("silhouette-cameo3")!;
 const letter = SHEET_SIZES.find((s) => s.name === "Letter")!;
@@ -102,7 +103,39 @@ describe("Cameo 3 command sequences", () => {
     expect(parseStatus("0")).toBe("ready");
     expect(parseStatus("    1")).toBe("moving");
     expect(parseStatus("2")).toBe("unloaded");
+    expect(parseStatus("3")).toBe("paused");
     expect(parseStatus("???")).toBe("unknown");
+  });
+});
+
+describe("waiting for the cutter", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function waitWith(statuses: string[], timeoutMs: number) {
+    vi.useFakeTimers();
+    const protocol = new GraphtecProtocol(new FakeTransport(cameo3Responder({ statuses })), cameo3);
+    const seen: CutterStatus[] = [];
+    const wait = protocol.waitForReady({ timeoutMs, pollMs: 50, onStatus: (s) => seen.push(s) });
+    const settled = wait.then(
+      () => "ready",
+      (e) => e
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+    return { result: await settled, seen };
+  }
+
+  it("keeps waiting while the cutter is moving or paused, however long that takes", async () => {
+    const statuses = [...Array(40).fill("1"), ...Array(40).fill("3"), "1", "0"];
+    const { result, seen } = await waitWith(statuses, 500); // ~4 s of polls against a 0.5 s timeout
+    expect(result).toBe("ready");
+    expect(seen).toContain("paused");
+  });
+
+  it("still gives up when the cutter reports something it isn't making progress on", async () => {
+    const { result } = await waitWith(["???"], 500);
+    expect(result).toBeInstanceOf(CutterNotReadyError);
   });
 });
 
@@ -115,7 +148,7 @@ describe("paper types", () => {
     const printer = PAPER_TYPES.find((p) => p.id === "printer-paper-20lb")!;
     expect(printer.adhesive).toBe(false);
     expect(PAPER_TYPES.filter((p) => p.adhesive).every((p) => /sticker/i.test(p.name))).toBe(true);
-    expect(setupCommands(cameo3, PRINTER_PAPER_20LB)).toEqual(expect.arrayContaining(["!3,1", "FX10,1", "TF2,1"]));
+    expect(setupCommands(cameo3, PRINTER_PAPER_20LB)).toEqual(expect.arrayContaining(["!3,1", "FX6,1", "TF2,1"]));
     expect(PRINTER_PAPER_20LB.autoBladeDepth).toBeGreaterThan(sticker.autoBladeDepth);
   });
 });

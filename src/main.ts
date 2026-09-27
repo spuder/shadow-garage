@@ -62,6 +62,7 @@ interface AppState {
   gapMm: number;
   sheetMarginMm: number;
   cutSpeed: number | null; // cutter speed chosen with the slider; null = the paper type's default
+  cutPressure: number | null; // blade pressure chosen with the slider; null = the paper type's default
   printCutLines: boolean; // include the red cut outlines when printing (the SVG download always has them)
   regmarksEnabled: boolean;
   regmarkStyle: "standard" | "four_corner";
@@ -87,6 +88,7 @@ const state: AppState = {
   gapMm: 4,
   sheetMarginMm: 8,
   cutSpeed: null,
+  cutPressure: null,
   printCutLines: false,
   regmarksEnabled: true,
   regmarkStyle: "standard",
@@ -163,6 +165,9 @@ const cutterMaterialEl = document.getElementById("cutterMaterial") as HTMLDivEle
 const cutSpeedSlider = document.getElementById("cutSpeedSlider") as HTMLInputElement;
 const cutSpeedValue = document.getElementById("cutSpeedValue") as HTMLSpanElement;
 const cutSpeedDefault = document.getElementById("cutSpeedDefault") as HTMLSpanElement;
+const cutPressureSlider = document.getElementById("cutPressureSlider") as HTMLInputElement;
+const cutPressureValue = document.getElementById("cutPressureValue") as HTMLSpanElement;
+const cutPressureDefault = document.getElementById("cutPressureDefault") as HTMLSpanElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
 const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
@@ -208,7 +213,8 @@ function addPaperSwatch(pt: (typeof PAPER_TYPES)[number]) {
   btn.innerHTML = `<span class="paper-swatch-color" style="background:${pt.swatch}"></span><span class="paper-swatch-label">${pt.name}</span>`;
   btn.addEventListener("click", () => {
     state.paperTypeId = pt.id;
-    state.cutSpeed = null; // back to the new paper type's own speed
+    state.cutSpeed = null; // back to the new paper type's own speed and pressure
+    state.cutPressure = null;
     paperTypeGrid.querySelectorAll(".paper-swatch").forEach((el) => el.classList.toggle("active", el === btn));
     recompute();
   });
@@ -239,10 +245,10 @@ function fmtIn(mm: number): string {
   return mmToIn(mm).toFixed(2);
 }
 
-/** Cut settings for the selected paper type, with the speed slider's choice if it's been moved. */
+/** Cut settings for the selected paper type, with the speed and pressure sliders' choices if they've been moved. */
 function currentCutMaterial() {
   const m = currentPaperType().cutMaterial;
-  return state.cutSpeed === null ? m : { ...m, speed: state.cutSpeed };
+  return { ...m, speed: state.cutSpeed ?? m.speed, pressure: state.cutPressure ?? m.pressure };
 }
 
 function currentPaperType() {
@@ -962,6 +968,7 @@ const CUT_PHASE_TEXT: Record<CutPhase, string> = {
   manualRegmarks: "Manual registration — position the blade",
   regmarks: "Finding registration marks…",
   cutting: "Cutting…",
+  paused: "Paused on the cutter — press Resume on its screen to continue, or Abort here",
   finishing: "Finishing…",
   done: "Done — unload the mat",
 };
@@ -982,12 +989,16 @@ function renderCutter() {
   else cutterStatusEl.textContent = "Not connected";
 
   const m = currentCutMaterial();
-  const defaultSpeed = currentPaperType().cutMaterial.speed;
-  cutterMaterialEl.textContent = `Cut settings: ${m.name} — pressure ${m.pressure}, speed ${m.speed}, blade ${m.autoBladeDepth} (set by Paper Type)`;
+  const { speed: defaultSpeed, pressure: defaultPressure } = currentPaperType().cutMaterial;
+  cutterMaterialEl.textContent = `Cut settings: ${m.name}, blade ${m.autoBladeDepth} (set by Paper Type)`;
   cutSpeedSlider.value = String(m.speed);
   cutSpeedValue.textContent = String(m.speed);
   cutSpeedDefault.textContent = m.speed === defaultSpeed ? "(Paper Type default)" : `(Paper Type default ${defaultSpeed})`;
   cutSpeedSlider.disabled = running;
+  cutPressureSlider.value = String(m.pressure);
+  cutPressureValue.textContent = String(m.pressure);
+  cutPressureDefault.textContent = m.pressure === defaultPressure ? "(Paper Type default)" : `(Paper Type default ${defaultPressure})`;
+  cutPressureSlider.disabled = running;
 
   cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
   cutterConnectBtn.disabled = !supported || c.connecting || running;
@@ -1112,6 +1123,8 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
   const controller = new AbortController();
   c.job = controller;
   let phase: CutPhase = "waiting";
+  let progress: number | null = null;
+  const cuttingText = (f: number) => `${dryRun ? "Tracing, blade up" : "Cutting"}… ${Math.round(f * 100)}%`;
   c.statusText = CUT_PHASE_TEXT[phase];
   renderCutter();
   try {
@@ -1120,12 +1133,14 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
       {
         onPhase: (p) => {
           phase = p;
-          c.statusText = CUT_PHASE_TEXT[p];
+          // Coming back from a pause on the cutter: keep showing how far the job had got.
+          c.statusText = p === "cutting" && progress !== null ? cuttingText(progress) : CUT_PHASE_TEXT[p];
           renderCutter();
         },
         onProgress: (f) => {
+          progress = f;
           if (phase !== "cutting") return;
-          c.statusText = `${dryRun ? "Tracing, blade up" : "Cutting"}… ${Math.round(f * 100)}%`;
+          c.statusText = cuttingText(f);
           renderCutter();
         },
         onManualRegistration: waitForManualRegistration,
@@ -1166,6 +1181,12 @@ cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
 cutSpeedSlider.addEventListener("input", () => {
   const speed = parseInt(cutSpeedSlider.value, 10);
   state.cutSpeed = speed === currentPaperType().cutMaterial.speed ? null : speed;
+  renderCutter();
+});
+
+cutPressureSlider.addEventListener("input", () => {
+  const pressure = parseInt(cutPressureSlider.value, 10);
+  state.cutPressure = pressure === currentPaperType().cutMaterial.pressure ? null : pressure;
   renderCutter();
 });
 

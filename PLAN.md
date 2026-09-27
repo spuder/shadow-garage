@@ -721,3 +721,15 @@ rest, although draw packets of the same size run fine. Dry runs now send one mov
 wait for the carriage between moves. To keep that affordable, each outline is simplified to 1 mm
 for the dry run only (`DRY_RUN_TOLERANCE_MM`). A 43-sticker traced sheet went from 7,761 moves to
 1,099. Real cuts are unchanged.
+
+**Pause on the cutter, pressure slider, quieter log.** Dry run then traced all 11 squares, but the
+real cut on 20 lb printer paper (pressure 10, speed 3, blade 2) skipped about two stickers down
+and the user paused it on the Cameo 3's screen. While paused the cutter answers status `3`, which
+upstream doesn't know; it's now `"paused"`, shown as its own phase ("press Resume on its screen,
+or Abort here") and logged once on pause and once on resume. `waitForReady` also only times out
+after `timeoutMs` without progress: before, its 120 s deadline counted time spent moving, and that
+job's single packet already took 80 s, so a slower or bigger job would have failed mid-cut. The
+dry run over the same paths was clean, so the skipping points at blade drag: printer paper drops
+to pressure 6 (upstream uses 5), and a **Pressure** slider overrides the paper type's pressure like
+the Speed slider does. The log now collapses back-to-back identical status polls into one
+"status 1 repeated N more times over T s" line; an 80 s packet had added ~1,500 poll lines.

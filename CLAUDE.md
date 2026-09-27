@@ -74,6 +74,12 @@ hardware evidence:
 - The mark scan is one-shot on the device, so the app retries it from offset positions
   (`regmarkScanOffsetMm`, `regmarkSearchStepsMm`).
 - High speeds bind the carriage and cause layer shifts, so material speeds are deliberately low.
+- Status `3` means paused from the cutter's own screen. `waitForReady` only times out after
+  `timeoutMs` with no progress (moving or paused resets it); one packet of a slow cut can take
+  well over a minute.
+- Excess blade pressure drags the mat and makes it skip, even when a dry run of the same sheet is
+  clean. Prefer the lowest pressure that cuts through; the Pressure/Speed sliders override
+  `materials.ts` per job.
 
 ## Testing the cutter without hardware
 
