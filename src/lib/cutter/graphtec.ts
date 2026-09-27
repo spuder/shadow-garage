@@ -279,6 +279,12 @@ export class GraphtecProtocol implements CutterProtocol {
     );
   }
 
+  async home(): Promise<void> {
+    if (!this.model.homeCommand) return;
+    await this.send([this.model.homeCommand]);
+    await this.waitForReady({ timeoutMs: 60_000, pollMs: 250 });
+  }
+
   async setup(material: CutMaterial): Promise<void> {
     await this.send(setupCommands(this.model, material));
   }

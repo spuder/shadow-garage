@@ -4,6 +4,8 @@
 // Hardware figures for Silhouette models come from fablabnbg/inkscape-silhouette's Graphtec.py
 // device table (GPL-2.0 — used as a reference for facts about the hardware, not vendored).
 
+export type HomeCommand = "TT" | "H" | null;
+
 export type RegmarkArgOrder = "height_width" | "width_height";
 
 export type ProtocolId = "graphtec-gpgl"; // future: "hpgl" (Roland, USCutter, generic USB-serial vinyl cutters)
@@ -28,6 +30,12 @@ export interface CutterModel {
    * Which one a model really expects is being confirmed on hardware with the calibration cut.
    */
   regmarkArgOrder: RegmarkArgOrder;
+  /**
+   * Command that physically homes the carriage before a job, so the AutoBlade depth tap and the
+   * mark search start from a known position. Silhouette Studio's startup sequence (upstream
+   * Commands.md) sends TT; GPGL also has H. null = don't home (Graphtec.py's behaviour).
+   */
+  homeCommand: HomeCommand;
   pressureRange: [number, number];
   speedRange: [number, number];
   toolHolders: number;
@@ -48,6 +56,7 @@ export const CUTTER_MODELS: CutterModel[] = [
     marginTopMm: 0,
     regmarks: "standard",
     regmarkArgOrder: "height_width",
+    homeCommand: "TT",
     pressureRange: [1, 33],
     speedRange: [1, 10],
     toolHolders: 2,

@@ -35,6 +35,7 @@ interface CutterUiState {
   manualRetryKind: CutKind | null; // set when the mark search failed, to offer manual registration
   jog: { jog: ManualJog; resolve: () => void; reject: (e: Error) => void } | null; // manual registration in progress
   jogStepMm: 1 | 5;
+  homing: boolean; // Home button in progress
 }
 
 interface StickerDesign {
@@ -91,7 +92,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
-  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1 },
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, homing: false },
 };
 
 applyTheme(state.theme);
@@ -142,6 +143,7 @@ const sendToCutterBtn = document.getElementById("sendToCutterBtn") as HTMLButton
 const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement;
 const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
 const cutterTestBtn = document.getElementById("cutterTestBtn") as HTMLButtonElement;
+const cutterHomeBtn = document.getElementById("cutterHomeBtn") as HTMLButtonElement;
 const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
@@ -904,6 +906,7 @@ downloadPdfBtn.addEventListener("click", async () => {
 const CUT_PHASE_TEXT: Record<CutPhase, string> = {
   waiting: "Checking the cutter…",
   loadMat: "Load the mat into the cutter…",
+  homing: "Homing the cutter…",
   setup: "Setting up the blade…",
   manualRegmarks: "Manual registration — position the blade",
   regmarks: "Finding registration marks…",
@@ -919,7 +922,7 @@ function errorText(e: unknown): string {
 function renderCutter() {
   const c = state.cutter;
   const supported = webUsbSupported();
-  const running = c.job !== null;
+  const running = c.job !== null || c.homing;
 
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
   else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
@@ -930,6 +933,7 @@ function renderCutter() {
   cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
   cutterConnectBtn.disabled = !supported || c.connecting || running;
   cutterTestBtn.disabled = !c.session || running;
+  cutterHomeBtn.disabled = !c.session || running;
   calCutBtn.disabled = !c.session || running;
   copyLogBtn.disabled = !c.log;
   manualRegBtn.hidden = !c.manualRetryKind || !c.session || running;
@@ -943,8 +947,8 @@ function renderCutter() {
   cutterErrorEl.hidden = !c.error;
   cutterErrorEl.textContent = c.error ?? "";
 
-  sendToCutterBtn.textContent = running ? "Abort" : "Send to Cutter";
-  sendToCutterBtn.disabled = !running && (!c.session || state.designs.length === 0);
+  sendToCutterBtn.textContent = c.job ? "Abort" : "Send to Cutter";
+  sendToCutterBtn.disabled = c.homing || (!c.job && (!c.session || state.designs.length === 0));
 }
 
 async function connectCutter() {
@@ -978,12 +982,19 @@ async function disconnectCutter() {
 }
 
 /**
- * Diagnostic override while print-and-cut scaling is being confirmed on hardware: ?regmarkArgs=width_height
- * (or height_width) swaps the order of the mark distances sent in the mark search. Recorded in the log.
+ * Diagnostic overrides while print-and-cut is being confirmed on hardware, recorded in the log:
+ * ?regmarkArgs=width_height|height_width swaps the order of the mark distances in the mark search;
+ * ?homeCmd=TT|H|none picks the command that homes the carriage before a job.
  */
 function withDiagnosticOverrides(model: CutterModel): CutterModel {
-  const order = new URLSearchParams(location.search).get("regmarkArgs");
-  return order === "width_height" || order === "height_width" ? { ...model, regmarkArgOrder: order } : model;
+  const params = new URLSearchParams(location.search);
+  const out = { ...model };
+  const order = params.get("regmarkArgs");
+  if (order === "width_height" || order === "height_width") out.regmarkArgOrder = order;
+  const home = params.get("homeCmd");
+  if (home === "TT" || home === "H") out.homeCommand = home;
+  else if (home === "none") out.homeCommand = null;
+  return out;
 }
 
 /**
@@ -1015,7 +1026,7 @@ function waitForManualRegistration(jog: ManualJog): Promise<void> {
 async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "auto") {
   const c = state.cutter;
   const session = c.session;
-  if (!session || c.job) return;
+  if (!session || c.job || c.homing) return;
   c.error = null;
   c.manualRetryKind = null;
 
@@ -1074,6 +1085,25 @@ cutterConnectBtn.addEventListener("click", () => {
 });
 
 cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
+
+cutterHomeBtn.addEventListener("click", async () => {
+  const c = state.cutter;
+  if (!c.session || c.job || c.homing) return;
+  c.error = null;
+  c.homing = true;
+  c.statusText = "Homing…";
+  renderCutter();
+  try {
+    await c.session.home();
+    c.statusText = "Homed";
+  } catch (e) {
+    c.statusText = null;
+    c.error = errorText(e);
+  } finally {
+    c.homing = false;
+    renderCutter();
+  }
+});
 calCutBtn.addEventListener("click", () => void runCutterJob("calibration"));
 
 calSheetBtn.addEventListener("click", async () => {

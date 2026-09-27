@@ -35,7 +35,7 @@ describe("CutterSession", () => {
     const progress: number[] = [];
     await session.run(job(true), { onPhase: (p) => phases.push(p), onProgress: (f) => progress.push(f) });
 
-    expect(phases).toEqual(["waiting", "waiting", "setup", "regmarks", "cutting", "finishing", "done"]);
+    expect(phases).toEqual(["waiting", "waiting", "homing", "setup", "regmarks", "cutting", "finishing", "done"]);
     expect(progress.at(-1)).toBe(1);
     const log = t.log;
     const idx = (cmd: string) => log.indexOf(cmd);
@@ -52,8 +52,11 @@ describe("CutterSession", () => {
     // cuttingmat='cameo_12x12', autoblade=True, depth=1), then plot() of a 10mm square at sheet
     // (40,40) with regmark=True, regsearch=True, regwidth=195.9, reglength=259.4,
     // regorigin=(10,10), endposition='start'. Status polls (ESC ENQ) are omitted from both sides.
+    // One deliberate difference: we home the carriage (TT) before setup, as Silhouette Studio's
+    // documented startup sequence does and Graphtec.py doesn't (see homeCommand in models.ts).
     const upstream = [
       "<ESC EOT>", "FG", "TB71", "FA", "TC",
+      "TT",
       "TG1", "FN0", "TB50,0", "\\0,0", "Z6096,6096", "J1", "!10,1", "FX20,1", "FE0,1",
       "FF1,0,1", "FF1,1,1", "FC0,1,1", "FC18,1,1", "TF1,1",
       "TB50,0", "TB99", "TB52,2", "TB51,400", "TB53,10", "TB55,1", "TB123,5188,3918,0,0",
@@ -64,6 +67,42 @@ describe("CutterSession", () => {
     const session = await CutterSession.open(t, cameo3);
     await session.run(job(true));
     expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
+  });
+
+  it("homes the carriage after the mat check and before setup, waiting until it stops", async () => {
+    // statuses: mat check -> ready; homing -> moving, moving, ready
+    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "1", "1", "0"] }));
+    const session = await CutterSession.open(t, cameo3);
+    t.writes.length = 0;
+    vi.useFakeTimers();
+    const run = session.run(job(true));
+    await vi.advanceTimersByTimeAsync(2000);
+    await run;
+    const log = t.log;
+    expect(log.slice(0, 5)).toEqual(["<ESC ENQ>", "TT", "<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>"]);
+    expect(log.indexOf("TT")).toBeLessThan(log.indexOf("TG1"));
+    expect(log.indexOf("TG1")).toBeLessThan(log.indexOf("TB123,5188,3918,0,0"));
+  });
+
+  it("sends the model's home command, or none", async () => {
+    for (const [homeCommand, expected] of [["H", ["H"]], [null, []]] as const) {
+      const t = new FakeTransport(cameo3Responder());
+      const session = await CutterSession.open(t, { ...cameo3, homeCommand });
+      await session.run(job(false));
+      expect(t.log.filter((c) => c === "TT" || c === "H")).toEqual(expected);
+    }
+  });
+
+  it("homes on its own for the Home button, and not while a job runs", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    t.writes.length = 0;
+    await session.home();
+    expect(t.log).toEqual(["TT", "<ESC ENQ>"]);
+    expect(session.log.format()).toMatch(/## home/);
+    const run = session.run(job(false));
+    await expect(session.home()).rejects.toThrow(/busy/);
+    await run;
   });
 
   it("skips the mark search for cut-only jobs", async () => {
@@ -166,7 +205,7 @@ describe("CutterSession", () => {
     const session = await CutterSession.open(t, cameo3);
     await session.run(job(true));
     const text = session.log.format();
-    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width/);
+    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width; home TT/);
     expect(text).toMatch(/-> <ESC EOT>/);
     expect(text).toMatch(/<- CAMEO V1\.10 {4}\|/);
     expect(text).toMatch(/## job: cut, 1 paths; sheet bbox \(40\.00, 40\.00\)-\(50\.00, 50\.00\) mm; frame offset \(-10, -10\) mm; marks standard auto/);

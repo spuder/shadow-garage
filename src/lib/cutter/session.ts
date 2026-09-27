@@ -9,7 +9,7 @@ import type { CutFrame, CutterProtocol, RegmarkSpec } from "./protocol";
 import { boundingBox } from "../geometry";
 import { LoggingTransport, type Transport } from "./transport";
 
-export type CutPhase = "waiting" | "loadMat" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
+export type CutPhase = "waiting" | "loadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
 
 export interface CutJob {
   paths: Contour[]; // sheet millimetres
@@ -87,7 +87,7 @@ export class CutterSession {
   /** Handshakes with the cutter on an already-open transport; closes the transport if that fails. */
   static async open(transport: Transport, model: CutterModel): Promise<CutterSession> {
     const log = new LoggingTransport(transport);
-    log.note(`connect: ${model.manufacturer} ${model.name} via ${transport.label}; mark search args ${model.regmarkArgOrder}`);
+    log.note(`connect: ${model.manufacturer} ${model.name} via ${transport.label}; mark search args ${model.regmarkArgOrder}; home ${model.homeCommand ?? "none"}`);
     const protocol = protocolFor(model, log);
     try {
       const { firmware } = await protocol.handshake();
@@ -120,6 +120,10 @@ export class CutterSession {
         signal,
         onStatus: (s) => events.onPhase?.(s === "unloaded" ? "loadMat" : "waiting"),
       });
+      // Home before setup and registration: ESC EOT re-initializes coordinates wherever the carriage
+      // happens to be, so without this the AutoBlade depth tap and the mark search start off-position.
+      events.onPhase?.("homing");
+      await this.protocol.home();
       events.onPhase?.("setup");
       await this.protocol.setup(job.material);
       if (job.regmarks && job.registration === "manual") {
@@ -150,6 +154,18 @@ export class CutterSession {
         }
       }
       throw e;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Homes the carriage on its own (the panel's Home button). */
+  async home(): Promise<void> {
+    if (this.busy) throw new Error("The cutter is busy");
+    this.busy = true;
+    this.log.note("home");
+    try {
+      await this.protocol.home();
     } finally {
       this.busy = false;
     }

@@ -39,6 +39,8 @@ export interface CutterProtocol {
   /** Resets the device and reads its firmware version — the minimal "is this really talking to a cutter" check. */
   handshake(): Promise<{ firmware: string }>;
   status(): Promise<CutterStatus>;
+  /** Physically homes the carriage and waits until it has stopped. */
+  home(): Promise<void>;
   waitForReady(opts: WaitOptions): Promise<void>;
   setup(material: CutMaterial): Promise<void>;
   /** Has the cutter optically find the printed marks; afterwards device (0,0) is the top-left mark. */
