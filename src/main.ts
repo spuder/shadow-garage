@@ -3,8 +3,9 @@ import { extractAlphaMask, type RawMask } from "./lib/trace";
 import { computeDesign, type DesignResult } from "./lib/design";
 import { SHEET_SIZES, packMixedSheet, type SheetSize } from "./lib/sheet";
 import { buildSingleStickerSVG, buildSheetSVG, type RenderOptions, type SheetItem } from "./lib/svgBuilder";
-import { REGMARK_CLEARANCE_MM } from "./lib/regmarks";
-import { downloadSvgString, exportSvgStringAsPdf } from "./lib/pdfExport";
+import { getRegmarkKeepoutRects, REGMARK_ORIGIN_MM } from "./lib/regmarks";
+import { downloadSvgString } from "./lib/download";
+import { printSvg } from "./lib/print";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
@@ -58,6 +59,7 @@ interface AppState {
   sheetIndex: number;
   fillMode: FillMode;
   marginMm: number;
+  preserveSharpCorners: boolean;
   gapMm: number;
   sheetMarginMm: number;
   regmarksEnabled: boolean;
@@ -80,6 +82,7 @@ const state: AppState = {
   sheetIndex: 0,
   fillMode: "single",
   marginMm: 1,
+  preserveSharpCorners: false,
   gapMm: 4,
   sheetMarginMm: 8,
   regmarksEnabled: true,
@@ -128,6 +131,7 @@ const sheetSelect = document.getElementById("sheetSelect") as HTMLSelectElement;
 
 const marginSlider = document.getElementById("marginSlider") as HTMLInputElement;
 const marginValue = document.getElementById("marginValue") as HTMLSpanElement;
+const sharpCornersToggle = document.getElementById("sharpCornersToggle") as HTMLInputElement;
 const gapInput = document.getElementById("gapInput") as HTMLInputElement;
 const gapValue = document.getElementById("gapValue") as HTMLSpanElement;
 
@@ -139,7 +143,7 @@ const tabs = Array.from(document.querySelectorAll(".tab")) as HTMLButtonElement[
 const sheetCountBadge = document.getElementById("sheetCount") as HTMLSpanElement;
 const summaryEl = document.getElementById("summary") as HTMLDivElement;
 const downloadSvgBtn = document.getElementById("downloadSvgBtn") as HTMLButtonElement;
-const downloadPdfBtn = document.getElementById("downloadPdfBtn") as HTMLButtonElement;
+const printBtn = document.getElementById("printBtn") as HTMLButtonElement;
 const sendToCutterBtn = document.getElementById("sendToCutterBtn") as HTMLButtonElement;
 const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement;
 const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
@@ -242,15 +246,18 @@ function toScreenSVG(svgMarkup: string): string {
   return svgMarkup.replace(/width="([\d.]+)mm"/, 'width="$1"').replace(/height="([\d.]+)mm"/, 'height="$1"');
 }
 
-function effectiveSheetMarginMm(): number {
-  // Registration marks sit within REGMARK_CLEARANCE_MM of each edge — never pack stickers into
-  // that band, or printed artwork could overlap and obscure a mark the cutter needs to find.
-  return state.regmarksEnabled ? Math.max(state.sheetMarginMm, REGMARK_CLEARANCE_MM) : state.sheetMarginMm;
-}
-
 function maxStickerDimMm(): number {
   const sheet = currentSheet();
-  return Math.min(sheet.widthMm, sheet.heightMm) - 2 * effectiveSheetMarginMm();
+  return Math.min(sheet.widthMm, sheet.heightMm) - 2 * packingMarginMm();
+}
+
+/**
+ * Sheet-edge margin for packing. With registration marks on, the cutter can only cut inside the
+ * area bounded by the marks (they sit REGMARK_ORIGIN_MM in from every edge), so stickers keep a
+ * little further in than that; the corner keepouts separately keep art clear of the marks.
+ */
+function packingMarginMm(): number {
+  return state.regmarksEnabled ? Math.max(state.sheetMarginMm, REGMARK_ORIGIN_MM + 2) : state.sheetMarginMm;
 }
 
 /** Packs the current designs onto the current sheet and resolves each placement to a renderable SheetItem. */
@@ -258,7 +265,11 @@ function computeSheetItems(sheet: SheetSize): { placements: { id: string; x: num
   const mixedItems = state.designs
     .filter((d) => d.design)
     .map((d) => ({ id: d.id, widthMm: d.design!.actualWmm, heightMm: d.design!.actualHmm }));
-  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, effectiveSheetMarginMm(), state.fillMode);
+  // Registration marks only occupy small squares at their corners, not a full-width/height band —
+  // route packing around just those squares rather than shrinking the whole usable area from
+  // every edge (see getRegmarkKeepoutRects).
+  const keepouts = state.regmarksEnabled ? getRegmarkKeepoutRects(sheet.widthMm, sheet.heightMm, state.regmarkStyle === "four_corner") : [];
+  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, packingMarginMm(), state.fillMode, keepouts);
   const items: SheetItem[] = placements
     .map((p) => {
       const d = state.designs.find((dd) => dd.id === p.id);
@@ -273,7 +284,7 @@ function computeSheetItems(sheet: SheetSize): { placements: { id: string; x: num
 function recompute() {
   const margin = state.marginMm;
   for (const d of state.designs) {
-    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, margin, d.aspectLocked, d.driveBy);
+    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, margin, d.aspectLocked, d.driveBy, state.preserveSharpCorners);
     // Keep the stored target in sync with what was actually achieved, so the next edit (a drag,
     // another text-box change) starts from reality instead of a stale/approximate guess.
     d.widthMm = d.design.actualWmm;
@@ -286,6 +297,7 @@ function recompute() {
 function render() {
   // paper/sheet/margin/gap/fillMode control mirrors
   marginValue.textContent = state.marginMm.toFixed(1);
+  sharpCornersToggle.checked = state.preserveSharpCorners;
   gapValue.textContent = state.gapMm.toFixed(1);
   sheetSelect.value = String(state.sheetIndex);
   fillModeToggle.querySelectorAll("button").forEach((b) => {
@@ -316,7 +328,7 @@ function render() {
   sheetCountBadge.textContent = String(placements.length);
 
   downloadSvgBtn.disabled = !hasImages;
-  downloadPdfBtn.disabled = !hasImages;
+  printBtn.disabled = !hasImages;
   renderCutter();
 
   if (!hasImages) {
@@ -715,7 +727,7 @@ function startResize(e: PointerEvent, design: StickerDesign, hd: (typeof HANDLE_
 
     design.widthMm = newW;
     design.heightMm = newH;
-    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, state.marginMm);
+    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, state.marginMm, true, "width", state.preserveSharpCorners);
 
     // Live feedback: redraw in place without re-packing the sheet (positions would otherwise
     // jump around mid-drag as siblings reflow) — the real repack happens once on release.
@@ -837,6 +849,11 @@ marginSlider.addEventListener("input", () => {
   recompute();
 });
 
+sharpCornersToggle.addEventListener("change", () => {
+  state.preserveSharpCorners = sharpCornersToggle.checked;
+  recompute();
+});
+
 gapInput.addEventListener("input", () => {
   state.gapMm = parseFloat(gapInput.value);
   recompute();
@@ -890,22 +907,15 @@ downloadSvgBtn.addEventListener("click", () => {
   }
 });
 
-downloadPdfBtn.addEventListener("click", async () => {
-  downloadPdfBtn.disabled = true;
-  try {
-    const sheet = currentSheet();
-    if (state.activeTab === "design") {
-      const sel = selectedDesign();
-      if (!sel?.design) return;
-      const svg = buildSingleStickerSVG(sel.design, renderOptionsFor(sel));
-      await exportSvgStringAsPdf(svg, sel.design.actualWmm, sel.design.actualHmm, `${baseName()}-cut.pdf`);
-    } else {
-      const { items } = computeSheetItems(sheet);
-      const svg = buildSheetSVG(items, sheet, currentRegmarkStyle());
-      await exportSvgStringAsPdf(svg, sheet.widthMm, sheet.heightMm, `stickers-sheet.pdf`);
-    }
-  } finally {
-    downloadPdfBtn.disabled = false;
+printBtn.addEventListener("click", () => {
+  const sheet = currentSheet();
+  if (state.activeTab === "design") {
+    const sel = selectedDesign();
+    if (!sel?.design) return;
+    printSvg(buildSingleStickerSVG(sel.design, renderOptionsFor(sel)));
+  } else {
+    const { items } = computeSheetItems(sheet);
+    printSvg(buildSheetSVG(items, sheet, currentRegmarkStyle()));
   }
 });
 
@@ -1155,14 +1165,9 @@ cutterHomeBtn.addEventListener("click", async () => {
 calCutBtn.addEventListener("click", () => void runCutterJob("calibration"));
 dryRunBtn.addEventListener("click", () => void runCutterJob("sheet", "auto", true));
 
-calSheetBtn.addEventListener("click", async () => {
-  calSheetBtn.disabled = true;
-  try {
-    const sheet = currentSheet();
-    await exportSvgStringAsPdf(buildCalibrationSVG(sheet, state.regmarkStyle), sheet.widthMm, sheet.heightMm, `cutter-calibration-${sheet.name.toLowerCase()}.pdf`);
-  } finally {
-    calSheetBtn.disabled = false;
-  }
+calSheetBtn.addEventListener("click", () => {
+  const sheet = currentSheet();
+  printSvg(buildCalibrationSVG(sheet, state.regmarkStyle));
 });
 
 copyLogBtn.addEventListener("click", async () => {

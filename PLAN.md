@@ -157,6 +157,70 @@ as there's one design, not two — so the `+` tile is visible immediately after 
 upload, not only once a second one already exists. Also reworded the dropzone's hint text to
 mention selecting/dropping several files at once.
 
+## 2f. Print replaces Download PDF — done
+
+Swapped "Download PDF" for a **Print** button that opens the browser's native print dialog
+directly (`window.print()`), positioned to the *left* of Download SVG since it's now the more
+common action. New `src/lib/print.ts` swaps the export-quality SVG (real mm width/height, same
+one `buildSingleStickerSVG`/`buildSheetSVG` already produce) into a dedicated `#printArea` node;
+new `@media print` CSS in `style.css` hides everything else on the page (`body > *:not(#printArea)`)
+so only that SVG prints, at `@page { margin: 0 }`. No new library needed — the browser's own print
+pipeline handles the mm-to-physical-size conversion, the same way it already does when a page
+declares `width="Xmm"` on an SVG. This let us **drop jsPDF and svg2pdf.js entirely**
+(`src/lib/pdfExport.ts` → `src/lib/download.ts`, now just `downloadSvgString`), which incidentally
+cut the production bundle from ~511KB to ~24KB.
+
+## 2g. Preserve sharp corners (opt-in) — done
+
+Added a "Preserve sharp corners" toggle (Offset Margin block), **defaulting off**. Root-caused
+that corner rounding wasn't (only) coming from Chaikin smoothing — the margin/merge dilation
+itself uses a circular (Euclidean chamfer) structuring element, and dilating *any* shape with a
+disk mathematically rounds convex corners by ~the dilation radius; no amount of smoothing
+afterward can undo that. Fixed at the actual source: `dilateMask` in `trace.ts` takes a new
+`chebyshev` flag that switches the two-pass distance transform to Chebyshev/chessboard distance
+(diagonal steps cost the same as orthogonal ones) — the raster equivalent of a miter join instead
+of a round one, which keeps right-angle corners exactly sharp. Paired with a new
+`chaikinSmoothPreserveCorners` in the same file, which classifies each vertex's turn angle once
+(≥60° = sharp) on the pre-smoothing polygon and carries protected vertices through every Chaikin
+iteration unchanged, so genuine corners survive the smoothing pass too.
+
+**This is a real trade-off, not a strict improvement — confirmed by testing, not assumed.**
+Square/Chebyshev dilation is exactly right for a geometric icon with real right angles (verified:
+a nested-square test icon went from visibly rounded to a crisp 90°, toggle-for-toggle, at the
+same 5mm margin). But dilating a *curved* boundary (any rounded letterform, i.e. ordinary text)
+with a square structuring element doesn't produce a smooth bulge — it faceting/staircases the
+curve, since square dilation is a poor approximation of "offset by r" for anything that isn't
+already rectilinear. Verified this regression directly on the wordmark test asset before deciding
+the default: with the toggle on, its smooth outline became visibly jagged. That's why default is
+off (unchanged, smooth-by-default behavior) with the toggle as an explicit per-design opt-in, and
+why the hint text says plainly it's for geometric logos/icons, not curvy or text-heavy artwork.
+`computeCutPath`/`computeDesign` both take the new flag as their last parameter, threaded through
+from a single `state.preserveSharpCorners` (global, like margin) into `recompute()` and the
+corner-drag live-preview path in `main.ts`.
+
+## 2h. Two more bugs found and fixed
+
+1. **Dark mode was printing as black ink.** The Print feature (§2f) hides everything but
+   `#printArea` during print, but never overrode `body`'s own background — which is the dark
+   theme's near-black `--bg` unless the viewer happens to be in light mode. Since a single
+   sticker's exported SVG has no full-canvas background rect of its own (intentional — it's what
+   makes the "Clear" paper type genuinely transparent for file exports), that dark `body`
+   background showed straight through as printed ink, both around the sticker and anywhere the
+   SVG itself is transparent. Fixed with `@media print { html, body { background: white
+   !important; } }` — screen theme stays a pure preview convenience, the printed page is always
+   on white regardless of it. Deliberately a CSS-only fix, not a change to `svgBuilder.ts`'s SVG
+   output, since that output's transparency is correct/intentional for saved files.
+2. **Registration marks were wasting a lot of sheet space.** `effectiveSheetMarginMm()` (§2d)
+   inflated the packing margin to the full 30mm clearance *on all four sides*, when the marks
+   only actually occupy ~30×30mm squares at 3 (or 4) corners — on a Letter sheet (215.9mm wide)
+   that wastes 60mm of width (28%) that has nothing near it to protect. Replaced with precise
+   per-corner keep-out rectangles (`getRegmarkKeepoutRects` in `regmarks.ts`) and taught
+   `packMixedSheet` (`sheet.ts`) to narrow only the specific shelf rows that actually vertically
+   overlap a keepout, pushing the row's left/right bound in just enough to clear it, rather than
+   shrinking the whole usable rectangle uniformly. Verified: the same test sheet went from a
+   handful of stickers with huge dead margins to 46, using the full width on every row except the
+   couple that overlap a corner mark.
+
 **Known environment caveat, not a code issue**: in the sandboxed preview browser used during
 this session, blob-based file downloads (`<a download>` + `URL.createObjectURL`) intermittently
 stopped landing on disk partway through testing — reproduced even with a trivial 10-byte test
@@ -615,3 +679,15 @@ step is diagnosis without risk. **Dry run** (`CutJob.dryRun` → `pathCommands(.
 runs the full job but turns every draw into a move, so the user can watch where the cutter
 thinks the outlines are. The docs now also say plainly that Abort can't be relied on to stop a
 buffered job: switch the cutter off.
+
+**Merged `master`** (sharp-corners toggle, native Print replacing Download PDF, corner-only
+registration keep-outs, README, GitHub Pages). Integration fixes:
+- The calibration sheet now prints through `printSvg` instead of the removed PDF export.
+- A print-only `.sheet-paper { fill: white !important }` rule keeps the dark-mode grey preview
+  page off paper. The on-screen rule is also scoped to `#viewportInner`, and `#printArea` sits
+  outside it.
+- With marks on, packing keeps at least `REGMARK_ORIGIN_MM + 2` (12 mm) from the edges
+  (`packingMarginMm()`). Master's 8 mm margin would put stickers outside the area the cutter can
+  cut after registration (between the marks, 10 mm in), and every print-and-cut job would fail
+  with "outside the cutter's allowed area".
+- The dev URL moved to `/shadow-garage/` (Vite `base`).

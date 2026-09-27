@@ -2,7 +2,8 @@
 
 Shadow Garage can send a sheet straight to a **Silhouette Cameo 3** over USB — no Silhouette
 Studio needed. It uses WebUSB, so it needs **Chrome or Edge on desktop** (Firefox and Safari don't
-implement WebUSB). The page must be served over HTTPS or from `localhost`.
+implement WebUSB). The page must be served over HTTPS or from `localhost`. Locally, `npm run dev -- --port 5183` serves it at
+`http://localhost:5183/shadow-garage/` (the path matches the GitHub Pages deployment).
 
 Only white sticker paper with the AutoBlade is supported for now.
 
@@ -35,7 +36,7 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
 
 1. Lay out the sheet with **Registration Marks** on and the **Standard (3-mark)** style — the
    Cameo 3 can't read four-corner marks.
-2. Download the PDF and print it at **100% / Actual size**. Any printer scaling moves the stickers
+2. Click **Print** and print at **100% / Actual size**. Any printer scaling moves the stickers
    relative to the marks and the cut will miss.
 3. Load it carefully. The mark scan only looks near where each mark should be, so small errors
    make it miss:
@@ -71,7 +72,7 @@ been confirmed on a Cameo 3 yet; if it doesn't work, please send the log.
 
 ## Checking print-and-cut alignment
 
-1. Click **Calibration sheet** and print the PDF at 100% on the paper size selected in the app.
+1. Click **Print calibration sheet** and print at 100% on the paper size selected in the app.
    It has the registration marks and a 140 × 200 mm rectangle with a centre cross.
 2. Load it as above, connect, and click **Calibration cut**.
 3. The cut should follow the printed rectangle. If it doesn't, measure the **cut** rectangle's width
@@ -83,7 +84,7 @@ been confirmed on a Cameo 3 yet; if it doesn't work, please send the log.
 
 Graphtec.py sends the mark distances in the search command height first; a Silhouette Studio
 trace suggests width first. To try the other order, open the app with `?regmarkArgs=width_height`
-(for example `http://localhost:5183/?regmarkArgs=width_height`), reconnect, and run the
+(for example `http://localhost:5183/shadow-garage/?regmarkArgs=width_height`), reconnect, and run the
 calibration cut again. `?regmarkArgs=height_width` (the default) switches back.
 
 Homing is off by default: `TT` (from Silhouette Studio's startup sequence) did nothing on a real

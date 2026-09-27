@@ -69,6 +69,12 @@ html, body {
   color: var(--accent);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .icon-btn {
   display: flex;
   align-items: center;
@@ -79,6 +85,9 @@ html, body {
   border-radius: 9px;
   width: 34px;
   height: 34px;
+  font-size: 16px;
+  line-height: 1;
+  text-decoration: none;
   cursor: pointer;
 }
 .icon-btn.small {
@@ -631,4 +640,39 @@ select {
 .cutter-error {
   color: var(--danger);
   word-break: break-word;
+}
+
+#printArea {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 0;
+  }
+  /* Dark mode is a screen-preview convenience only — the printed page must always be on a
+     white backdrop, regardless of theme, or a dark --bg would bleed through as printed black
+     ink anywhere the sticker SVG itself is transparent (a "Clear" paper sticker, or the margin
+     around it on the page). */
+  :root {
+    color-scheme: light; /* no dark canvas under the page when printing from dark mode */
+  }
+  html, body {
+    background: white !important;
+  }
+  body > *:not(#printArea) {
+    display: none !important;
+  }
+  #printArea {
+    display: block !important;
+    background: white;
+  }
+  #printArea svg {
+    display: block;
+  }
+  /* The sheet preview's page is grey on screen in dark mode (#viewportInner .sheet-paper); a
+     printed page is always white. */
+  .sheet-paper {
+    fill: white !important;
+  }
 }
