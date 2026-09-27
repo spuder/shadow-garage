@@ -62,7 +62,7 @@ export function buildSheetSVG(items: SheetItem[], sheet: SheetSize, regmarks: fa
   });
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${sheet.widthMm}mm" height="${sheet.heightMm}mm" viewBox="0 0 ${sheet.widthMm} ${sheet.heightMm}">`,
-    `<rect x="0" y="0" width="${sheet.widthMm}" height="${sheet.heightMm}" fill="white"/>`,
+    `<rect x="0" y="0" width="${sheet.widthMm}" height="${sheet.heightMm}" class="sheet-paper" fill="white"/>`,
     `<g id="print">${prints.join("")}</g>`,
     `<g id="cutlines">${cuts.join("")}</g>`,
     regmarks ? buildRegmarksSVG(sheet.widthMm, sheet.heightMm, regmarks === "four_corner") : "",

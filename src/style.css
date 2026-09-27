@@ -12,6 +12,7 @@
   --canvas-bg: #0e0e13;
   --checker-a: #17171d;
   --checker-b: #1d1d24;
+  --sheet-paper: #6f6f78;
   --danger: #ff5252;
 
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -28,6 +29,7 @@
   --canvas-bg: #f2f2f5;
   --checker-a: #eeeef1;
   --checker-b: #ffffff;
+  --sheet-paper: #ffffff;
 }
 
 * {
@@ -157,6 +159,11 @@ html, body {
     linear-gradient(45deg, var(--checker-a) 25%, var(--checker-b) 25%, var(--checker-b) 75%, var(--checker-a) 75%) 8px 8px/16px 16px;
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
+}
+
+/* Screen-only: dims the sheet's page in dark mode; exports keep the rect's white fill attribute. */
+#viewportInner .sheet-paper {
+  fill: var(--sheet-paper);
 }
 
 .overlay-layer {
