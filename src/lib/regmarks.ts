@@ -12,6 +12,19 @@ export const REGMARK_STROKE_MM = 0.3; // thinner is measurably more accurate for
 // outside this, or printed stickers could overlap and obscure a mark.
 export const REGMARK_CLEARANCE_MM = REGMARK_ORIGIN_MM + REGMARK_ARM_MM;
 
+/**
+ * Where the marks sit on a sheet: the top-left mark's corner, and the distances from it to the
+ * right-hand and bottom marks. Shared by the SVG below and the cutter's mark search, so what the
+ * cutter looks for is always exactly what was printed.
+ */
+export function regmarkLayout(sheetWidthMm: number, sheetHeightMm: number): { originMm: number; widthMm: number; heightMm: number } {
+  return {
+    originMm: REGMARK_ORIGIN_MM,
+    widthMm: sheetWidthMm - 2 * REGMARK_ORIGIN_MM,
+    heightMm: sheetHeightMm - 2 * REGMARK_ORIGIN_MM,
+  };
+}
+
 function lMarkPath(cornerX: number, cornerY: number, hDir: 1 | -1, vDir: 1 | -1): string {
   const p1 = `${(cornerX + hDir * REGMARK_ARM_MM).toFixed(3)},${cornerY.toFixed(3)}`;
   const p2 = `${cornerX.toFixed(3)},${cornerY.toFixed(3)}`;
@@ -21,8 +34,7 @@ function lMarkPath(cornerX: number, cornerY: number, hDir: 1 | -1, vDir: 1 | -1)
 
 /** Registration marks for one sheet, in mm, positioned relative to the sheet's own (0,0) origin. */
 export function buildRegmarksSVG(sheetWidthMm: number, sheetHeightMm: number, fourCorner = false): string {
-  const regWidth = sheetWidthMm - 2 * REGMARK_ORIGIN_MM;
-  const regHeight = sheetHeightMm - 2 * REGMARK_ORIGIN_MM;
+  const { widthMm: regWidth, heightMm: regHeight } = regmarkLayout(sheetWidthMm, sheetHeightMm);
   const topRightX = REGMARK_ORIGIN_MM + regWidth;
   const bottomLeftY = REGMARK_ORIGIN_MM + regHeight;
 

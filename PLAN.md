@@ -414,3 +414,50 @@ general SVG-stroke-to-line-segments approach.
 - Cricut/Silhouette native project-file formats — SVG/PDF only.
 - Non-outer-silhouette (hole-aware) cutting — intentionally out of scope per real-world
   vinyl sticker cutting practice (see `src/lib/trace.ts` component tracing).
+
+## 11. Send to cutter (Silhouette Cameo 3 over WebUSB) — built, not yet hardware-verified
+
+Cuts the packed sheet directly from Chrome/Edge, replacing "export, then open another program."
+Setup and usage are in `docs/cutter-setup.md`.
+
+**Decisions:**
+- **Cameo 3 only, USB only, Linux + macOS first.** USB was picked over Bluetooth for v1: it works
+  on both target platforms (macOS with no setup, Linux with one udev rule), has no pairing step,
+  and is the path inkscape-silhouette exercises most. Bluetooth Classic on the Cameo 3 would go
+  through Web Serial (RFCOMM), not Web Bluetooth; it's the planned v2 and also the only way to reach
+  Windows without a driver swap, since Windows' `usbprint.sys` blocks WebUSB on printer-class
+  devices. Open question for v2: which RFCOMM service UUID the Cameo 3 advertises (upstream
+  connects to raw channel 1; Web Serial selects by UUID).
+- **AutoBlade + white sticker paper only** — one fixed preset in `materials.ts`, no picker.
+- **Always cuts the sheet layout** (what the PDF prints), regardless of the active tab — a lone
+  sticker from the Design tab has no printed counterpart to align to.
+- Protocol reverse-engineered from inkscape-silhouette's `Graphtec.py` (GPL-2.0), studied rather
+  than vendored, same as `regmarks.ts`.
+
+**Structure** (`src/lib/cutter/`), layered so more models/manufacturers are mostly data:
+- `transport.ts` — byte-pipe interface; `webUsbTransport.ts` implements it. WebUSB `transferIn`
+  can't be cancelled, so one read loop runs continuously into a `ByteQueue` and reads wait on that
+  (a timed-out `transferIn` would otherwise swallow the next reply).
+- `protocol.ts` — protocol interface; `graphtec.ts` implements Silhouette's GPGL (pure command
+  builders + a `GraphtecProtocol` class). Future HPGL cutters plug in here.
+- `models.ts` (device registry: USB ids, bed, mat, mark style, ranges), `materials.ts`.
+- `job.ts` — sheet items → ordered, closed, 1mm-overcut polylines; `layoutJob()` maps sheet mm to
+  device mm (mark-relative when marks are on) and rejects sheets that don't fit the mat or mark
+  styles the model can't read. `regmarks.ts` gained `regmarkLayout()` so the SVG and the cutter's
+  mark search share one definition of where the marks are.
+- `session.ts` — handshake on connect, then per job: wait for ready (prompts to load the mat) →
+  setup → mark search → cut in ≤1KB packets, polling status between packets → park.
+
+**Verified:** `npm test` (vitest, new) covers the command builders, job geometry and the session
+state machine against a scripted fake device, including a golden test asserting our full command
+stream equals inkscape-silhouette's own dry-run transcript for the same job. The UI flow was driven
+end-to-end in headless Chromium against a simulated Cameo 3 injected as `navigator.usb` (connect,
+cut, wrong-mark-style error, marks-not-found error, disconnect, unsupported browser).
+
+**Not verified (needs the real cutter):** that Chrome can claim the device on macOS/Linux; the
+sticker-paper pressure/speed/depth (upstream's "Sticker Sheet" defaults: 20/10/1); the mark-relative
+coordinate sign convention on a real print-and-cut (target: cut within ~0.5mm of the print); and
+whether ESC EOT (Abort) lifts the blade immediately.
+
+**Noted, out of scope:** the printed PDF includes the red cut line, so any misalignment shows as a
+red edge — a "hide cut lines when printing" option would be a separate small change.

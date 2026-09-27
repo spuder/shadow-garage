@@ -557,3 +557,20 @@ select {
 .export-buttons button {
   flex: 1;
 }
+
+.cutter-status {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.cutter-buttons {
+  display: flex;
+  gap: 6px;
+}
+.cutter-buttons button {
+  white-space: nowrap;
+}
+.cutter-error {
+  color: var(--danger);
+  word-break: break-word;
+}

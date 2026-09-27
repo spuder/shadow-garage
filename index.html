@@ -116,6 +116,17 @@
               </div>
               <div class="hint-text">Sheet-only; sticker placement automatically keeps clear of the marks. Standard works on virtually every Silhouette model; four-corner is only for the Cameo Pro MK-II, Cameo 5 Alpha, and Cameo 5 Alpha Plus.</div>
             </div>
+
+            <div class="panel-block" id="cutterBlock">
+              <div class="block-title">Cutter</div>
+              <div id="cutterStatus" class="cutter-status">Not connected</div>
+              <div class="cutter-buttons">
+                <button id="cutterConnectBtn" class="btn-secondary small">Connect</button>
+                <button id="cutterTestBtn" class="btn-secondary small" disabled>Test cut</button>
+              </div>
+              <div class="hint-text">Silhouette Cameo 3 over USB · White sticker paper · AutoBlade. Cuts the sheet as laid out in Sheet Preview; test cut is a 10&nbsp;mm square for a scrap sheet.</div>
+              <div id="cutterError" class="hint-text cutter-error" hidden></div>
+            </div>
           </div>
 
           <div class="bottom-bar">
@@ -124,6 +135,7 @@
               <button id="downloadSvgBtn" class="btn-primary" disabled>Download SVG</button>
               <button id="downloadPdfBtn" class="btn-secondary" disabled>Download PDF</button>
             </div>
+            <button id="sendToCutterBtn" class="btn-primary" disabled>Send to Cutter</button>
           </div>
         </aside>
       </main>

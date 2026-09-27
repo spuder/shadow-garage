@@ -8,12 +8,24 @@ import { downloadSvgString, exportSvgStringAsPdf } from "./lib/pdfExport";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
+import { buildCutPaths, CutJobError, layoutJob, testSquarePaths } from "./lib/cutter/job";
+import { WHITE_STICKER_PAPER } from "./lib/cutter/materials";
+import { CutterSession, type CutJob, type CutPhase } from "./lib/cutter/session";
+import { reconnectUsbCutter, requestUsbCutter, webUsbSupported, WebUsbTransport } from "./lib/cutter/webUsbTransport";
 
 const MM_PER_IN = 25.4;
 const MIN_SIZE_MM = 0.25 * MM_PER_IN;
 
 type Tab = "design" | "sheet";
 type FillMode = "single" | "fill";
+
+interface CutterUiState {
+  session: CutterSession | null;
+  connecting: boolean;
+  job: AbortController | null; // set while a cut is running
+  statusText: string | null; // job progress / result; null shows the connection summary
+  error: string | null;
+}
 
 interface StickerDesign {
   id: string;
@@ -47,6 +59,7 @@ interface AppState {
   editingPlacementXY: { x: number; y: number } | null; // where the selected design's edited instance sits on the sheet (sheet tab only)
   needsRefit: boolean;
   lastPlacements: { id: string; x: number; y: number }[];
+  cutter: CutterUiState;
 }
 
 const state: AppState = {
@@ -68,6 +81,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null },
 };
 
 applyTheme(state.theme);
@@ -114,6 +128,11 @@ const sheetCountBadge = document.getElementById("sheetCount") as HTMLSpanElement
 const summaryEl = document.getElementById("summary") as HTMLDivElement;
 const downloadSvgBtn = document.getElementById("downloadSvgBtn") as HTMLButtonElement;
 const downloadPdfBtn = document.getElementById("downloadPdfBtn") as HTMLButtonElement;
+const sendToCutterBtn = document.getElementById("sendToCutterBtn") as HTMLButtonElement;
+const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement;
+const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
+const cutterTestBtn = document.getElementById("cutterTestBtn") as HTMLButtonElement;
+const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
 
 const zoomOutBtn = document.getElementById("zoomOutBtn") as HTMLButtonElement;
 const zoomInBtn = document.getElementById("zoomInBtn") as HTMLButtonElement;
@@ -270,6 +289,7 @@ function render() {
 
   downloadSvgBtn.disabled = !hasImages;
   downloadPdfBtn.disabled = !hasImages;
+  renderCutter();
 
   if (!hasImages) {
     summaryEl.textContent = "Upload an image to begin";
@@ -860,6 +880,152 @@ downloadPdfBtn.addEventListener("click", async () => {
     downloadPdfBtn.disabled = false;
   }
 });
+
+// ---- cutter ----
+const CUT_PHASE_TEXT: Record<CutPhase, string> = {
+  waiting: "Checking the cutter…",
+  loadMat: "Load the mat into the cutter…",
+  setup: "Setting up the blade…",
+  regmarks: "Finding registration marks…",
+  cutting: "Cutting…",
+  finishing: "Finishing…",
+  done: "Done — unload the mat",
+};
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+function renderCutter() {
+  const c = state.cutter;
+  const supported = webUsbSupported();
+  const running = c.job !== null;
+
+  if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
+  else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
+  else if (c.statusText) cutterStatusEl.textContent = c.statusText;
+  else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}`;
+  else cutterStatusEl.textContent = "Not connected";
+
+  cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
+  cutterConnectBtn.disabled = !supported || c.connecting || running;
+  cutterTestBtn.disabled = !c.session || running;
+
+  cutterErrorEl.hidden = !c.error;
+  cutterErrorEl.textContent = c.error ?? "";
+
+  sendToCutterBtn.textContent = running ? "Abort" : "Send to Cutter";
+  sendToCutterBtn.disabled = !running && (!c.session || state.designs.length === 0);
+}
+
+async function connectCutter() {
+  const c = state.cutter;
+  c.connecting = true;
+  c.error = null;
+  c.statusText = null;
+  renderCutter();
+  try {
+    // Reuse a cutter this site was already granted, so there's no picker after the first time.
+    const conn = (await reconnectUsbCutter()) ?? (await requestUsbCutter());
+    if (conn) c.session = await CutterSession.open(conn.transport, conn.model);
+  } catch (e) {
+    c.error = errorText(e);
+  } finally {
+    c.connecting = false;
+    renderCutter();
+  }
+}
+
+async function disconnectCutter() {
+  const session = state.cutter.session;
+  state.cutter.session = null;
+  state.cutter.statusText = null;
+  renderCutter();
+  await session?.close();
+}
+
+/** The whole sheet as laid out in Sheet Preview (what the PDF prints), or a test square on a scrap sheet. */
+function buildCutJob(session: CutterSession, kind: "sheet" | "test"): CutJob {
+  const sheet = currentSheet();
+  if (kind === "test") {
+    return { paths: testSquarePaths(), ...layoutJob(sheet, session.model, false), material: WHITE_STICKER_PAPER };
+  }
+  const layout = layoutJob(sheet, session.model, currentRegmarkStyle());
+  const { items } = computeSheetItems(sheet);
+  if (items.length === 0) throw new CutJobError("Nothing fits on the sheet to cut.");
+  return { paths: buildCutPaths(items), ...layout, material: WHITE_STICKER_PAPER };
+}
+
+async function runCutterJob(kind: "sheet" | "test") {
+  const c = state.cutter;
+  const session = c.session;
+  if (!session || c.job) return;
+  c.error = null;
+
+  let job: CutJob;
+  try {
+    job = buildCutJob(session, kind);
+  } catch (e) {
+    c.error = errorText(e);
+    renderCutter();
+    return;
+  }
+
+  const controller = new AbortController();
+  c.job = controller;
+  let phase: CutPhase = "waiting";
+  c.statusText = CUT_PHASE_TEXT[phase];
+  renderCutter();
+  try {
+    await session.run(
+      job,
+      {
+        onPhase: (p) => {
+          phase = p;
+          c.statusText = CUT_PHASE_TEXT[p];
+          renderCutter();
+        },
+        onProgress: (f) => {
+          if (phase !== "cutting") return;
+          c.statusText = `Cutting… ${Math.round(f * 100)}%`;
+          renderCutter();
+        },
+      },
+      controller.signal
+    );
+  } catch (e) {
+    c.statusText = controller.signal.aborted ? "Aborted" : null;
+    if (!controller.signal.aborted) c.error = errorText(e);
+  } finally {
+    c.job = null;
+    renderCutter();
+  }
+}
+
+cutterConnectBtn.addEventListener("click", () => {
+  if (state.cutter.session) void disconnectCutter();
+  else void connectCutter();
+});
+
+cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
+
+sendToCutterBtn.addEventListener("click", () => {
+  if (state.cutter.job) state.cutter.job.abort();
+  else void runCutterJob("sheet");
+});
+
+if (webUsbSupported()) {
+  navigator.usb.addEventListener("disconnect", (e) => {
+    const session = state.cutter.session;
+    if (!session || !(session.transport instanceof WebUsbTransport) || session.transport.device !== e.device) return;
+    state.cutter.job?.abort();
+    state.cutter.session = null;
+    state.cutter.statusText = null;
+    state.cutter.error = "The cutter was unplugged.";
+    void session.close();
+    renderCutter();
+  });
+}
 
 // ---- initial render ----
 render();
