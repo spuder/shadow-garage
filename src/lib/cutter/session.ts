@@ -90,11 +90,11 @@ export class CutterSession {
     log.note(`connect: ${model.manufacturer} ${model.name} via ${transport.label}; mark search args ${model.regmarkArgOrder}; home ${model.homeCommand ?? "none"}`);
     const protocol = protocolFor(model, log);
     try {
-      const { firmware } = await protocol.handshake();
+      const { firmware } = await protocol.initialize();
       log.note(`firmware: ${firmware}`);
       return new CutterSession(model, transport, log, protocol, firmware);
     } catch (e) {
-      log.note(`handshake failed: ${(e as Error).message}`);
+      log.note(`initialization failed: ${(e as Error).message}`);
       await log.close();
       throw e;
     }
@@ -120,8 +120,11 @@ export class CutterSession {
         signal,
         onStatus: (s) => events.onPhase?.(s === "unloaded" ? "loadMat" : "waiting"),
       });
-      // Home before setup and registration: ESC EOT re-initializes coordinates wherever the carriage
-      // happens to be, so without this the AutoBlade depth tap and the mark search start off-position.
+      // Re-initialize at the start of every job, like each inkscape-silhouette run does. On a real
+      // Cameo 3, the first job after connecting tapped the AutoBlade into its adjust holes correctly,
+      // but later jobs in the same connection drifted right; each one inherited position state
+      // from the previous job (e.g. the registration-mark origin).
+      await this.protocol.initialize();
       if (this.model.homeCommand) {
         events.onPhase?.("homing");
         await this.protocol.home();

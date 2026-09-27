@@ -84,16 +84,11 @@ Add `?debug=1` to the URL to get a raw-command box in the Cutter panel. It sends
 line (`<ESC EOT>` and `<ESC ENQ>` for the two escape codes) and shows the cutter's reply;
 everything also goes into **Copy log**. Only use it with a scrap sheet loaded — `D` commands cut.
 
-**Current investigation — AutoBlade taps land about an inch right of the depth-adjust holes.** The
-Cameo 3 sets AutoBlade depth by tapping the blade into holes on the left of the deck; it's doing
-it about an inch to the right, on the paper. Run each experiment on scrap and note where it taps:
-
-0. Power the cutter off and on, load the mat, connect, and press **Test cut**. If the taps now hit
-   the holes, the offset came from earlier state (a run that was aborted or failed mid-sheet).
-1. `TF1,1` on its own (sets depth 1 on tool 1 — the tap routine).
-2. `TG0` then `TF1,1` (mat type "none" first).
-3. `TG1` then `TF1,1` (12×12 mat first — what a job sends).
-4. `H` on its own, then `M0,0` on its own: does either move the carriage to the left?
+**AutoBlade taps drifting off the adjust holes (fixed, pending confirmation).** The Cameo 3 sets
+AutoBlade depth by tapping the blade into holes on the left of the deck. The first job after
+connecting tapped in the right place, but later jobs in the same connection drifted right (up to
+about an inch). Every job now starts by re-initializing the cutter, as inkscape-silhouette does. If
+taps still drift, send the log from two back-to-back test cuts.
 
 ## Current limitations
 

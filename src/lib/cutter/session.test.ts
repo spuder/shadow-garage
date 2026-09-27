@@ -62,6 +62,8 @@ describe("CutterSession", () => {
     ];
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);
+    // Each job re-initializes, so a job's stream (connect handshake aside) is one full upstream run.
+    t.writes.length = 0;
     await session.run(job(true));
     expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
   });
@@ -76,7 +78,7 @@ describe("CutterSession", () => {
     await vi.advanceTimersByTimeAsync(2000);
     await run;
     const log = t.log;
-    expect(log.slice(0, 5)).toEqual(["<ESC ENQ>", "TT", "<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>"]);
+    expect(log.slice(0, 10)).toEqual(["<ESC ENQ>", "<ESC EOT>", "FG", "TB71", "FA", "TC", "TT", "<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>"]);
     expect(log.indexOf("TT")).toBeLessThan(log.indexOf("TG1"));
     expect(log.indexOf("TG1")).toBeLessThan(log.indexOf("TB123,5188,3918,0,0"));
   });
@@ -100,6 +102,18 @@ describe("CutterSession", () => {
     const run = session.run(job(false));
     await expect(session.home()).rejects.toThrow(/busy/);
     await run;
+  });
+
+  it("re-initializes the cutter at the start of every job", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    await session.run(job(true));
+    await session.run(job(false));
+    const log = t.log.filter((c) => c !== "<ESC ENQ>");
+    const inits = log.flatMap((c, i) => (c === "<ESC EOT>" ? [i] : []));
+    expect(inits).toHaveLength(3); // connect + two jobs
+    // each job's reset comes before its setup, and after the previous job has parked
+    expect(log.slice(inits[2] - 1, inits[2] + 6)).toEqual(["TB50,0", "<ESC EOT>", "FG", "TB71", "FA", "TC", "TG1"]);
   });
 
   it("skips the mark search for cut-only jobs", async () => {

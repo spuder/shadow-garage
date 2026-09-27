@@ -241,7 +241,7 @@ export class GraphtecProtocol implements CutterProtocol {
     await this.transport.write(frameCommands(cmds));
   }
 
-  async handshake(): Promise<{ firmware: string }> {
+  async initialize(): Promise<{ firmware: string }> {
     this.drain();
     await this.transport.write(escapeCommand(EOT));
     const firmware = (await this.query("FG", 10_000)).trim();

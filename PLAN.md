@@ -509,3 +509,14 @@ the holes on the left of the deck) land about an inch to the right, on the paper
 position reference is off by about an inch. To bisect this on hardware without a code round trip
 per guess, `?debug=1` adds a raw-command console (`CutterSession.sendRaw`, logged). The experiment
 list is in `docs/cutter-setup.md`.
+
+**Root cause of the drifting taps (likely).** Hardware result: right after connecting, the AutoBlade
+tapped into its adjust holes correctly; the next job in the same connection was about 1/4 in too far
+right, and the offset kept growing across jobs. inkscape-silhouette runs `setup()` → `initialize()`
+(`ESC EOT`, `FG`, `TB71`, `FA`, `TC`) at the start of every job, because each run is a fresh
+process. We only did it once, on connect, so every later job inherited position state from the
+previous one (plausibly the registration-mark origin). `CutterSession.run` now re-initializes first.
+Each job's command stream is now byte-for-byte one upstream run: the golden test compares a job's
+stream alone, and a new test checks that back-to-back jobs each start with `ESC EOT`. This also
+corrects the earlier guess that `ESC EOT` re-zeroes coordinates at the carriage's current position:
+the reset is what makes the first job right.

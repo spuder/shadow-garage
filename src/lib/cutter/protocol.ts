@@ -36,8 +36,12 @@ export interface WaitOptions {
 }
 
 export interface CutterProtocol {
-  /** Resets the device and reads its firmware version — the minimal "is this really talking to a cutter" check. */
-  handshake(): Promise<{ firmware: string }>;
+  /**
+   * Resets the device to a clean state and reads its firmware version. Run on connect (the
+   * minimal "is this really a cutter" check) and again at the start of every job, as
+   * inkscape-silhouette does: without it, a job inherits position state from the previous one.
+   */
+  initialize(): Promise<{ firmware: string }>;
   status(): Promise<CutterStatus>;
   /** Physically homes the carriage and waits until it has stopped. */
   home(): Promise<void>;
