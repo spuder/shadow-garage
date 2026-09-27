@@ -1,0 +1,110 @@
+import type { Contour } from "../geometry";
+import type { CutMaterial } from "./materials";
+
+// The command-language layer: one implementation per protocol family (graphtec.ts for Silhouette;
+// future: HPGL for Roland / generic vinyl cutters). Everything above this (session.ts, the UI) is
+// protocol-agnostic.
+
+/** "paused": someone pressed Pause on the cutter itself (a Cameo 3 reports "3" until Resume). */
+export type CutterStatus = "ready" | "moving" | "unloaded" | "paused" | "unknown";
+
+/** Registration marks as printed on the sheet (see src/lib/regmarks.ts), in sheet millimetres. */
+export interface RegmarkSpec {
+  style: "standard" | "four_corner";
+  originXmm: number; // top-left mark's corner
+  originYmm: number;
+  widthMm: number; // distance from the left marks to the right marks
+  heightMm: number; // distance from the top marks to the bottom marks
+}
+
+/** Maps sheet millimetres to device millimetres, plus the area every cut point must stay inside. */
+export interface CutFrame {
+  offsetXmm: number; // added to every sheet-space point
+  offsetYmm: number;
+  clip: { minX: number; minY: number; maxX: number; maxY: number }; // device mm, after the offset
+}
+
+export interface CutProgress {
+  onProgress?: (fraction: number) => void;
+  signal?: AbortSignal;
+  /** Dry run: trace every path with the blade raised (moves only), to see where a cut would land. */
+  bladeUp?: boolean;
+  /** Called as each packet of the job is sent (1-based), with the packet's first command. */
+  onPacket?: (packet: number, of: number, firstCommand: string) => void;
+  /** Every status polled while waiting for the cutter to work through what was sent. */
+  onStatus?: (status: CutterStatus) => void;
+}
+
+export interface WaitOptions {
+  /** Give up after this long without progress; time spent moving or paused doesn't count. */
+  timeoutMs: number;
+  pollMs: number;
+  onStatus?: (status: CutterStatus) => void;
+  signal?: AbortSignal;
+}
+
+export interface CutterProtocol {
+  /**
+   * Resets the device to a clean state and reads its firmware version. Run on connect (the
+   * minimal "is this really a cutter" check) and again at the start of every job, as
+   * inkscape-silhouette does: without it, a job inherits position state from the previous one.
+   */
+  initialize(): Promise<{ firmware: string }>;
+  status(): Promise<CutterStatus>;
+  /** Physically homes the carriage and waits until it has stopped. */
+  home(): Promise<void>;
+  waitForReady(opts: WaitOptions): Promise<void>;
+  setup(material: CutMaterial): Promise<void>;
+  /**
+   * Has the cutter optically find the printed marks, starting extraOffsetMm further down the sheet
+   * than usual; afterwards device (0,0) is the top-left mark. One attempt; throws RegmarkNotFoundError.
+   */
+  searchRegmarks(spec: RegmarkSpec, extraOffsetMm?: number): Promise<void>;
+  /** Manual registration, step 1: configure marks and move the tool to where the top-left mark should be. */
+  prepareManualRegmarks(spec: RegmarkSpec): Promise<void>;
+  /** Tool-up move in media millimetres (before registration). */
+  moveTo(xMm: number, yMm: number): Promise<void>;
+  /** Manual registration, step 2: register from the tool's current position. */
+  confirmManualRegmarks(spec: RegmarkSpec): Promise<void>;
+  cut(paths: Contour[], frame: CutFrame, progress?: CutProgress): Promise<void>;
+  /** Parks the tool after a job. */
+  finish(): Promise<void>;
+  /**
+   * Diagnostics: sends hand-typed commands (one per line; "<ESC EOT>" / "<ESC ENQ>" for escapes)
+   * and returns whatever the cutter replies within listenMs, in printable form.
+   */
+  sendRaw(lines: string[], listenMs?: number): Promise<string>;
+  /** Best-effort emergency stop. */
+  abort(): Promise<void>;
+}
+
+export class CutterNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CutterNotReadyError";
+  }
+}
+
+/** The job was cancelled on the cutter's own screen; nothing more may be sent for it. */
+export class CutterCancelledError extends Error {
+  constructor() {
+    super("Cancelled on the cutter.");
+    this.name = "CutterCancelledError";
+  }
+}
+
+export class RegmarkNotFoundError extends Error {
+  constructor(detail: string) {
+    super(
+      `The cutter couldn't find the registration marks (${detail}). Check: the sheet sits in the top-left corner of the mat grid and square to it; the mat is pushed against the left guide as it loads; the marks printed solid matte black. Then send again.`
+    );
+    this.name = "RegmarkNotFoundError";
+  }
+}
+
+export class CutOutOfBoundsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CutOutOfBoundsError";
+  }
+}

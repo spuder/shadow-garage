@@ -12,6 +12,7 @@
   --canvas-bg: #0e0e13;
   --checker-a: #17171d;
   --checker-b: #1d1d24;
+  --sheet-paper: #6f6f78;
   --danger: #ff5252;
 
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -28,6 +29,7 @@
   --canvas-bg: #f2f2f5;
   --checker-a: #eeeef1;
   --checker-b: #ffffff;
+  --sheet-paper: #ffffff;
 }
 
 * {
@@ -166,6 +168,11 @@ html, body {
     linear-gradient(45deg, var(--checker-a) 25%, var(--checker-b) 25%, var(--checker-b) 75%, var(--checker-a) 75%) 8px 8px/16px 16px;
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
+}
+
+/* Screen-only: dims the sheet's page in dark mode; exports keep the rect's white fill attribute. */
+#viewportInner .sheet-paper {
+  fill: var(--sheet-paper);
 }
 
 .overlay-layer {
@@ -432,6 +439,14 @@ select {
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
+.paper-group-title {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.paper-group-title:not(:first-child) {
+  margin-top: 4px;
+}
 .paper-swatch {
   border: 2px solid var(--border);
   border-radius: 10px;
@@ -567,6 +582,84 @@ select {
   flex: 1;
 }
 
+.cutter-status {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.cutter-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cutter-buttons + .cutter-buttons {
+  margin-top: 6px;
+}
+.cutter-manual-btn {
+  margin-top: 8px;
+}
+.jog-pad {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.jog-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  gap: 4px;
+  justify-content: center;
+  margin: 10px 0 4px;
+}
+.jog-grid button {
+  padding: 6px 0;
+}
+.cutter-buttons button {
+  white-space: nowrap;
+}
+.raw-block {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.raw-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--text);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+.raw-reply {
+  margin: 8px 0 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--panel-bg-2);
+  color: var(--text);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.cutter-material {
+  margin: 0 0 8px;
+}
+.cutter-speed {
+  display: block;
+  margin-bottom: 10px;
+}
+.cutter-speed-default {
+  color: var(--text-muted);
+}
+.cutter-error {
+  color: var(--danger);
+  word-break: break-word;
+}
+
 #printArea {
   display: none;
 }
@@ -579,6 +672,9 @@ select {
      white backdrop, regardless of theme, or a dark --bg would bleed through as printed black
      ink anywhere the sticker SVG itself is transparent (a "Clear" paper sticker, or the margin
      around it on the page). */
+  :root {
+    color-scheme: light; /* no dark canvas under the page when printing from dark mode */
+  }
   html, body {
     background: white !important;
   }
@@ -592,4 +688,14 @@ select {
   #printArea svg {
     display: block;
   }
+  /* The sheet preview's page is grey on screen in dark mode (#viewportInner .sheet-paper); a
+     printed page is always white. */
+  .sheet-paper {
+    fill: white !important;
+  }
+}
+.block-title-note {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
 }

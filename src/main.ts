@@ -3,18 +3,41 @@ import { extractAlphaMask, type RawMask } from "./lib/trace";
 import { computeDesign, type DesignResult } from "./lib/design";
 import { SHEET_SIZES, packMixedSheet, type SheetSize } from "./lib/sheet";
 import { buildSingleStickerSVG, buildSheetSVG, type RenderOptions, type SheetItem } from "./lib/svgBuilder";
-import { getRegmarkKeepoutRects } from "./lib/regmarks";
+import { getRegmarkKeepoutRects, REGMARK_ORIGIN_MM } from "./lib/regmarks";
 import { downloadSvgString } from "./lib/download";
 import { printSvg } from "./lib/print";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
+import { buildCalibrationSVG, calibrationPaths } from "./lib/cutter/calibration";
+import { buildCutPaths, CutJobError, layoutJob, testSquarePaths } from "./lib/cutter/job";
+import type { CutterModel } from "./lib/cutter/models";
+import { CutterCancelledError, RegmarkNotFoundError } from "./lib/cutter/protocol";
+import { CutterSession, type CutJob, type CutPhase, type ManualJog } from "./lib/cutter/session";
+import type { LoggingTransport } from "./lib/cutter/transport";
+import { reconnectUsbCutter, requestUsbCutter, webUsbSupported, WebUsbTransport } from "./lib/cutter/webUsbTransport";
 
 const MM_PER_IN = 25.4;
 const MIN_SIZE_MM = 0.25 * MM_PER_IN;
 
 type Tab = "design" | "sheet";
 type FillMode = "single" | "fill";
+
+type CutKind = "sheet" | "test" | "calibration";
+
+interface CutterUiState {
+  session: CutterSession | null;
+  connecting: boolean;
+  job: AbortController | null; // set while a cut is running
+  statusText: string | null; // job progress / result; null shows the connection summary
+  error: string | null;
+  log: LoggingTransport | null; // kept after disconnecting so it can still be copied
+  manualRetryKind: CutKind | null; // set when the mark search failed, to offer manual registration
+  manualRetryDryRun: boolean; // whether that failed job was a dry run
+  jog: { jog: ManualJog; resolve: () => void; reject: (e: Error) => void } | null; // manual registration in progress
+  jogStepMm: 1 | 5;
+  busyOp: boolean; // Home button or raw diagnostics command in progress
+}
 
 interface StickerDesign {
   id: string;
@@ -26,6 +49,8 @@ interface StickerDesign {
   heightMm: number;
   aspectLocked: boolean;
   driveBy: "width" | "height"; // which axis is authoritative when aspect is locked (see design.ts)
+  marginMm: number; // space around the artwork, per sticker
+  preserveSharpCorners: boolean;
   design: DesignResult | null;
 }
 
@@ -34,10 +59,13 @@ interface AppState {
   paperTypeId: string;
   sheetIndex: number;
   fillMode: FillMode;
-  marginMm: number;
+  marginMm: number; // margin and sharp corners for the next sticker added: the last values chosen
   preserveSharpCorners: boolean;
   gapMm: number;
   sheetMarginMm: number;
+  cutSpeed: number | null; // cutter speed chosen with the slider; null = the paper type's default
+  cutPressure: number | null; // blade pressure chosen with the slider; null = the paper type's default
+  printCutLines: boolean; // include the red cut outlines when printing (the SVG download always has them)
   regmarksEnabled: boolean;
   regmarkStyle: "standard" | "four_corner";
   designs: StickerDesign[];
@@ -49,6 +77,7 @@ interface AppState {
   editingPlacementXY: { x: number; y: number } | null; // where the selected design's edited instance sits on the sheet (sheet tab only)
   needsRefit: boolean;
   lastPlacements: { id: string; x: number; y: number }[];
+  cutter: CutterUiState;
 }
 
 const state: AppState = {
@@ -60,6 +89,9 @@ const state: AppState = {
   preserveSharpCorners: false,
   gapMm: 4,
   sheetMarginMm: 8,
+  cutSpeed: null,
+  cutPressure: null,
+  printCutLines: false,
   regmarksEnabled: true,
   regmarkStyle: "standard",
   designs: [],
@@ -71,6 +103,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, manualRetryDryRun: false, jog: null, jogStepMm: 1, busyOp: false },
 };
 
 applyTheme(state.theme);
@@ -105,6 +138,7 @@ const sheetSelect = document.getElementById("sheetSelect") as HTMLSelectElement;
 
 const marginSlider = document.getElementById("marginSlider") as HTMLInputElement;
 const marginValue = document.getElementById("marginValue") as HTMLSpanElement;
+const marginForEl = document.getElementById("marginFor") as HTMLSpanElement;
 const sharpCornersToggle = document.getElementById("sharpCornersToggle") as HTMLInputElement;
 const gapInput = document.getElementById("gapInput") as HTMLInputElement;
 const gapValue = document.getElementById("gapValue") as HTMLSpanElement;
@@ -118,6 +152,35 @@ const sheetCountBadge = document.getElementById("sheetCount") as HTMLSpanElement
 const summaryEl = document.getElementById("summary") as HTMLDivElement;
 const downloadSvgBtn = document.getElementById("downloadSvgBtn") as HTMLButtonElement;
 const printBtn = document.getElementById("printBtn") as HTMLButtonElement;
+const printCutLinesToggle = document.getElementById("printCutLinesToggle") as HTMLInputElement;
+const sendToCutterBtn = document.getElementById("sendToCutterBtn") as HTMLButtonElement;
+const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement;
+const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
+const cutterTestBtn = document.getElementById("cutterTestBtn") as HTMLButtonElement;
+const cutterHomeBtn = document.getElementById("cutterHomeBtn") as HTMLButtonElement;
+const rawBlock = document.getElementById("rawBlock") as HTMLDivElement;
+const rawInput = document.getElementById("rawInput") as HTMLTextAreaElement;
+const rawSendBtn = document.getElementById("rawSendBtn") as HTMLButtonElement;
+const rawReplyEl = document.getElementById("rawReply") as HTMLPreElement;
+const CUTTER_DEBUG = new URLSearchParams(location.search).has("debug");
+const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
+const cutterMaterialEl = document.getElementById("cutterMaterial") as HTMLDivElement;
+const cutSpeedSlider = document.getElementById("cutSpeedSlider") as HTMLInputElement;
+const cutSpeedValue = document.getElementById("cutSpeedValue") as HTMLSpanElement;
+const cutSpeedDefault = document.getElementById("cutSpeedDefault") as HTMLSpanElement;
+const cutPressureSlider = document.getElementById("cutPressureSlider") as HTMLInputElement;
+const cutPressureValue = document.getElementById("cutPressureValue") as HTMLSpanElement;
+const cutPressureDefault = document.getElementById("cutPressureDefault") as HTMLSpanElement;
+const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
+const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
+const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
+const dryRunBtn = document.getElementById("dryRunBtn") as HTMLButtonElement;
+const manualRegBtn = document.getElementById("manualRegBtn") as HTMLButtonElement;
+const jogPad = document.getElementById("jogPad") as HTMLDivElement;
+const jogStepBtn = document.getElementById("jogStepBtn") as HTMLButtonElement;
+const jogPosEl = document.getElementById("jogPos") as HTMLDivElement;
+const jogRegisterBtn = document.getElementById("jogRegisterBtn") as HTMLButtonElement;
+const jogCancelBtn = document.getElementById("jogCancelBtn") as HTMLButtonElement;
 
 const zoomOutBtn = document.getElementById("zoomOutBtn") as HTMLButtonElement;
 const zoomInBtn = document.getElementById("zoomInBtn") as HTMLButtonElement;
@@ -131,18 +194,35 @@ SHEET_SIZES.forEach((s, i) => {
   sheetSelect.appendChild(opt);
 });
 
-PAPER_TYPES.forEach((pt) => {
+// Grouped so it's obvious which stocks are adhesive sticker sheets and which are plain paper.
+const PAPER_GROUPS = [
+  { title: "Adhesive sticker sheets", adhesive: true },
+  { title: "Plain paper (no adhesive)", adhesive: false },
+];
+for (const group of PAPER_GROUPS) {
+  const types = PAPER_TYPES.filter((pt) => pt.adhesive === group.adhesive);
+  if (types.length === 0) continue;
+  const title = document.createElement("div");
+  title.className = "paper-group-title";
+  title.textContent = group.title;
+  paperTypeGrid.appendChild(title);
+  types.forEach(addPaperSwatch);
+}
+
+function addPaperSwatch(pt: (typeof PAPER_TYPES)[number]) {
   const btn = document.createElement("button");
   btn.className = "paper-swatch" + (pt.id === state.paperTypeId ? " active" : "");
   btn.dataset.paperId = pt.id;
   btn.innerHTML = `<span class="paper-swatch-color" style="background:${pt.swatch}"></span><span class="paper-swatch-label">${pt.name}</span>`;
   btn.addEventListener("click", () => {
     state.paperTypeId = pt.id;
+    state.cutSpeed = null; // back to the new paper type's own speed and pressure
+    state.cutPressure = null;
     paperTypeGrid.querySelectorAll(".paper-swatch").forEach((el) => el.classList.toggle("active", el === btn));
     recompute();
   });
   paperTypeGrid.appendChild(btn);
-});
+}
 
 // ---- helpers ----
 function uid(): string {
@@ -166,6 +246,12 @@ function inToMm(inch: number): number {
 }
 function fmtIn(mm: number): string {
   return mmToIn(mm).toFixed(2);
+}
+
+/** Cut settings for the selected paper type, with the speed and pressure sliders' choices if they've been moved. */
+function currentCutMaterial() {
+  const m = currentPaperType().cutMaterial;
+  return { ...m, speed: state.cutSpeed ?? m.speed, pressure: state.cutPressure ?? m.pressure };
 }
 
 function currentPaperType() {
@@ -201,7 +287,16 @@ function toScreenSVG(svgMarkup: string): string {
 
 function maxStickerDimMm(): number {
   const sheet = currentSheet();
-  return Math.min(sheet.widthMm, sheet.heightMm) - 2 * state.sheetMarginMm;
+  return Math.min(sheet.widthMm, sheet.heightMm) - 2 * packingMarginMm();
+}
+
+/**
+ * Sheet-edge margin for packing. With registration marks on, the cutter can only cut inside the
+ * area bounded by the marks (they sit REGMARK_ORIGIN_MM in from every edge), so stickers keep a
+ * little further in than that; the corner keepouts separately keep art clear of the marks.
+ */
+function packingMarginMm(): number {
+  return state.regmarksEnabled ? Math.max(state.sheetMarginMm, REGMARK_ORIGIN_MM + 2) : state.sheetMarginMm;
 }
 
 /** Packs the current designs onto the current sheet and resolves each placement to a renderable SheetItem. */
@@ -213,7 +308,7 @@ function computeSheetItems(sheet: SheetSize): { placements: { id: string; x: num
   // route packing around just those squares rather than shrinking the whole usable area from
   // every edge (see getRegmarkKeepoutRects).
   const keepouts = state.regmarksEnabled ? getRegmarkKeepoutRects(sheet.widthMm, sheet.heightMm, state.regmarkStyle === "four_corner") : [];
-  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, state.sheetMarginMm, state.fillMode, keepouts);
+  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, packingMarginMm(), state.fillMode, keepouts);
   const items: SheetItem[] = placements
     .map((p) => {
       const d = state.designs.find((dd) => dd.id === p.id);
@@ -226,9 +321,8 @@ function computeSheetItems(sheet: SheetSize): { placements: { id: string; x: num
 
 // ---- core recompute ----
 function recompute() {
-  const margin = state.marginMm;
   for (const d of state.designs) {
-    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, margin, d.aspectLocked, d.driveBy, state.preserveSharpCorners);
+    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, d.marginMm, d.aspectLocked, d.driveBy, d.preserveSharpCorners);
     // Keep the stored target in sync with what was actually achieved, so the next edit (a drag,
     // another text-box change) starts from reality instead of a stale/approximate guess.
     d.widthMm = d.design.actualWmm;
@@ -240,8 +334,12 @@ function recompute() {
 // ---- rendering ----
 function render() {
   // paper/sheet/margin/gap/fillMode control mirrors
-  marginValue.textContent = state.marginMm.toFixed(1);
-  sharpCornersToggle.checked = state.preserveSharpCorners;
+  const selForMargin = selectedDesign();
+  const margin = selForMargin?.marginMm ?? state.marginMm;
+  marginValue.textContent = margin.toFixed(1);
+  marginSlider.value = String(margin);
+  sharpCornersToggle.checked = selForMargin?.preserveSharpCorners ?? state.preserveSharpCorners;
+  marginForEl.textContent = selForMargin && state.designs.length > 1 ? `for ${selForMargin.fileName}` : "";
   gapValue.textContent = state.gapMm.toFixed(1);
   sheetSelect.value = String(state.sheetIndex);
   fillModeToggle.querySelectorAll("button").forEach((b) => {
@@ -273,6 +371,7 @@ function render() {
 
   downloadSvgBtn.disabled = !hasImages;
   printBtn.disabled = !hasImages;
+  renderCutter();
 
   if (!hasImages) {
     summaryEl.textContent = "Upload an image to begin";
@@ -670,7 +769,7 @@ function startResize(e: PointerEvent, design: StickerDesign, hd: (typeof HANDLE_
 
     design.widthMm = newW;
     design.heightMm = newH;
-    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, state.marginMm, true, "width", state.preserveSharpCorners);
+    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, design.marginMm, true, "width", design.preserveSharpCorners);
 
     // Live feedback: redraw in place without re-packing the sheet (positions would otherwise
     // jump around mid-drag as siblings reflow) — the real repack happens once on release.
@@ -726,6 +825,8 @@ async function handleFiles(files: FileList | File[]) {
           heightMm,
           aspectLocked: true,
           driveBy: "width",
+          marginMm: state.marginMm,
+          preserveSharpCorners: state.preserveSharpCorners,
           design: null,
         };
         state.designs.push(design);
@@ -787,13 +888,18 @@ sheetSelect.addEventListener("change", () => {
   recompute();
 });
 
+// Margin and sharp corners apply to the selected sticker, and become the default for new ones.
 marginSlider.addEventListener("input", () => {
   state.marginMm = parseFloat(marginSlider.value);
+  const sel = selectedDesign();
+  if (sel) sel.marginMm = state.marginMm;
   recompute();
 });
 
 sharpCornersToggle.addEventListener("change", () => {
   state.preserveSharpCorners = sharpCornersToggle.checked;
+  const sel = selectedDesign();
+  if (sel) sel.preserveSharpCorners = state.preserveSharpCorners;
   recompute();
 });
 
@@ -855,12 +961,368 @@ printBtn.addEventListener("click", () => {
   if (state.activeTab === "design") {
     const sel = selectedDesign();
     if (!sel?.design) return;
-    printSvg(buildSingleStickerSVG(sel.design, renderOptionsFor(sel)));
+    printSvg(buildSingleStickerSVG(sel.design, renderOptionsFor(sel), state.printCutLines));
   } else {
     const { items } = computeSheetItems(sheet);
-    printSvg(buildSheetSVG(items, sheet, currentRegmarkStyle()));
+    printSvg(buildSheetSVG(items, sheet, currentRegmarkStyle(), state.printCutLines));
   }
 });
+
+printCutLinesToggle.addEventListener("change", () => {
+  state.printCutLines = printCutLinesToggle.checked;
+});
+
+// ---- cutter ----
+const CUT_PHASE_TEXT: Record<CutPhase, string> = {
+  waiting: "Checking the cutter…",
+  loadMat: "Load the mat into the cutter…",
+  homing: "Homing the cutter…",
+  setup: "Setting up the blade…",
+  manualRegmarks: "Manual registration — position the blade",
+  regmarks: "Finding registration marks…",
+  cutting: "Cutting…",
+  paused: "Paused on the cutter — press Resume or Cancel on its screen",
+  finishing: "Finishing…",
+  done: "Done — unload the mat",
+};
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+function renderCutter() {
+  const c = state.cutter;
+  const supported = webUsbSupported();
+  const running = c.job !== null || c.busyOp;
+
+  if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
+  else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
+  else if (c.statusText) cutterStatusEl.textContent = c.statusText;
+  else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}`;
+  else cutterStatusEl.textContent = "Not connected";
+
+  const m = currentCutMaterial();
+  const { speed: defaultSpeed, pressure: defaultPressure } = currentPaperType().cutMaterial;
+  cutterMaterialEl.textContent = `Cut settings: ${m.name}, blade ${m.autoBladeDepth} (set by Paper Type)`;
+  cutSpeedSlider.value = String(m.speed);
+  cutSpeedValue.textContent = String(m.speed);
+  cutSpeedDefault.textContent = m.speed === defaultSpeed ? "(Paper Type default)" : `(Paper Type default ${defaultSpeed})`;
+  cutSpeedSlider.disabled = running;
+  cutPressureSlider.value = String(m.pressure);
+  cutPressureValue.textContent = String(m.pressure);
+  cutPressureDefault.textContent = m.pressure === defaultPressure ? "(Paper Type default)" : `(Paper Type default ${defaultPressure})`;
+  cutPressureSlider.disabled = running;
+
+  cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
+  cutterConnectBtn.disabled = !supported || c.connecting || running;
+  cutterTestBtn.disabled = !c.session || running;
+  cutterHomeBtn.hidden = !c.session?.model.homeCommand;
+  cutterHomeBtn.disabled = !c.session || running;
+  rawBlock.hidden = !CUTTER_DEBUG;
+  rawSendBtn.disabled = !c.session || running;
+  calCutBtn.disabled = !c.session || running;
+  dryRunBtn.disabled = !c.session || running || state.designs.length === 0;
+  copyLogBtn.disabled = !c.log;
+  manualRegBtn.hidden = !c.manualRetryKind || !c.session || running;
+
+  jogPad.hidden = !c.jog;
+  if (c.jog) {
+    jogStepBtn.textContent = `${c.jogStepMm} mm`;
+    jogPosEl.textContent = `Blade at ${c.jog.jog.x.toFixed(1)}, ${c.jog.jog.y.toFixed(1)} mm from the mat corner`;
+  }
+
+  cutterErrorEl.hidden = !c.error;
+  cutterErrorEl.textContent = c.error ?? "";
+
+  sendToCutterBtn.textContent = c.job ? "Abort" : "Send to Cutter";
+  sendToCutterBtn.disabled = c.busyOp || (!c.job && (!c.session || state.designs.length === 0));
+}
+
+async function connectCutter() {
+  const c = state.cutter;
+  c.connecting = true;
+  c.error = null;
+  c.statusText = null;
+  renderCutter();
+  try {
+    // Reuse a cutter this site was already granted, so there's no picker after the first time.
+    const conn = (await reconnectUsbCutter()) ?? (await requestUsbCutter());
+    if (conn) {
+      c.session = await CutterSession.open(conn.transport, withDiagnosticOverrides(conn.model));
+      c.log = c.session.log;
+      c.manualRetryKind = null;
+    }
+  } catch (e) {
+    c.error = errorText(e);
+  } finally {
+    c.connecting = false;
+    renderCutter();
+  }
+}
+
+async function disconnectCutter() {
+  const session = state.cutter.session;
+  state.cutter.session = null;
+  state.cutter.statusText = null;
+  renderCutter();
+  await session?.close();
+}
+
+/**
+ * Diagnostic overrides while print-and-cut is being confirmed on hardware, recorded in the log:
+ * ?regmarkArgs=width_height|height_width swaps the order of the mark distances in the mark search;
+ * ?homeCmd=TT|H|none picks the command that homes the carriage before a job.
+ */
+// ?scanOffset=<mm> starts the mark search further down the sheet (regmarkScanOffsetMm);
+// ?scanSteps=0,3,5,7 sets the retry positions (regmarkSearchStepsMm).
+function withDiagnosticOverrides(model: CutterModel): CutterModel {
+  const params = new URLSearchParams(location.search);
+  const out = { ...model };
+  const order = params.get("regmarkArgs");
+  if (order === "width_height" || order === "height_width") out.regmarkArgOrder = order;
+  const scanOffset = Number(params.get("scanOffset"));
+  if (params.has("scanOffset") && Number.isFinite(scanOffset)) out.regmarkScanOffsetMm = scanOffset;
+  const steps = params.get("scanSteps")?.split(",").map(Number);
+  if (steps && steps.length > 0 && steps.every(Number.isFinite)) out.regmarkSearchStepsMm = steps;
+  const home = params.get("homeCmd");
+  if (home === "TT" || home === "H") out.homeCommand = home;
+  else if (home === "none") out.homeCommand = null;
+  return out;
+}
+
+/**
+ * The whole sheet as laid out in Sheet Preview (what the PDF prints), a test square on a scrap sheet
+ * (no marks), or the calibration target (always with marks — it's for checking print-and-cut).
+ */
+function buildCutJob(session: CutterSession, kind: CutKind): CutJob {
+  const material = currentCutMaterial();
+  const sheet = currentSheet();
+  if (kind === "test") {
+    return { label: "test square", paths: testSquarePaths(), ...layoutJob(sheet, session.model, false), material };
+  }
+  if (kind === "calibration") {
+    return { label: "calibration", paths: calibrationPaths(sheet), ...layoutJob(sheet, session.model, state.regmarkStyle), material };
+  }
+  const layout = layoutJob(sheet, session.model, currentRegmarkStyle());
+  const { items } = computeSheetItems(sheet);
+  if (items.length === 0) throw new CutJobError("Nothing fits on the sheet to cut.");
+  return { label: "sheet", paths: buildCutPaths(items), ...layout, material };
+}
+
+/** Shows the jog pad and waits until the user registers (resolve) or cancels (reject). */
+function waitForManualRegistration(jog: ManualJog): Promise<void> {
+  return new Promise((resolve, reject) => {
+    state.cutter.jog = { jog, resolve, reject };
+    renderCutter();
+  });
+}
+
+async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "auto", dryRun = false) {
+  const c = state.cutter;
+  const session = c.session;
+  if (!session || c.job || c.busyOp) return;
+  c.error = null;
+  c.manualRetryKind = null;
+
+  let job: CutJob;
+  try {
+    job = { ...buildCutJob(session, kind), registration, dryRun };
+  } catch (e) {
+    c.error = errorText(e);
+    renderCutter();
+    return;
+  }
+
+  const controller = new AbortController();
+  c.job = controller;
+  let phase: CutPhase = "waiting";
+  let progress: number | null = null;
+  const cuttingText = (f: number) => `${dryRun ? "Tracing, blade up" : "Cutting"}… ${Math.round(f * 100)}%`;
+  c.statusText = CUT_PHASE_TEXT[phase];
+  renderCutter();
+  try {
+    await session.run(
+      job,
+      {
+        onPhase: (p) => {
+          phase = p;
+          // Coming back from a pause on the cutter: keep showing how far the job had got.
+          c.statusText = p === "cutting" && progress !== null ? cuttingText(progress) : CUT_PHASE_TEXT[p];
+          renderCutter();
+        },
+        onProgress: (f) => {
+          progress = f;
+          if (phase !== "cutting") return;
+          c.statusText = cuttingText(f);
+          renderCutter();
+        },
+        onManualRegistration: waitForManualRegistration,
+        onRegmarkAttempt: (n, of, offset) => {
+          c.statusText = n === 1 ? CUT_PHASE_TEXT.regmarks : `Finding registration marks (try ${n} of ${of}, ${offset} mm further down)…`;
+          renderCutter();
+        },
+      },
+      controller.signal
+    );
+  } catch (e) {
+    const cancelledOnCutter = e instanceof CutterCancelledError;
+    c.statusText = controller.signal.aborted ? "Aborted" : cancelledOnCutter ? "Cancelled on the cutter — nothing more was sent" : null;
+    if (!controller.signal.aborted && !cancelledOnCutter) c.error = errorText(e);
+    if (e instanceof RegmarkNotFoundError && registration === "auto") {
+      c.manualRetryKind = kind;
+      c.manualRetryDryRun = dryRun;
+    }
+  } finally {
+    c.job = null;
+    c.jog = null;
+    renderCutter();
+  }
+}
+
+function abortCutterJob() {
+  const c = state.cutter;
+  c.job?.abort();
+  c.jog?.reject(new DOMException("Cancelled", "AbortError"));
+}
+
+cutterConnectBtn.addEventListener("click", () => {
+  if (state.cutter.session) void disconnectCutter();
+  else void connectCutter();
+});
+
+cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
+
+cutSpeedSlider.addEventListener("input", () => {
+  const speed = parseInt(cutSpeedSlider.value, 10);
+  state.cutSpeed = speed === currentPaperType().cutMaterial.speed ? null : speed;
+  renderCutter();
+});
+
+cutPressureSlider.addEventListener("input", () => {
+  const pressure = parseInt(cutPressureSlider.value, 10);
+  state.cutPressure = pressure === currentPaperType().cutMaterial.pressure ? null : pressure;
+  renderCutter();
+});
+
+
+rawSendBtn.addEventListener("click", async () => {
+  const c = state.cutter;
+  if (!c.session || c.job || c.busyOp) return;
+  const lines = rawInput.value.split("\n").filter((l) => l.trim());
+  if (lines.length === 0) return;
+  c.error = null;
+  c.busyOp = true;
+  c.statusText = "Sending…";
+  renderCutter();
+  try {
+    const reply = await c.session.sendRaw(lines);
+    rawReplyEl.textContent = reply ? `Reply: ${reply}` : "No reply within 1.5 s";
+    rawReplyEl.hidden = false;
+    c.statusText = null;
+  } catch (e) {
+    c.statusText = null;
+    c.error = errorText(e);
+  } finally {
+    c.busyOp = false;
+    renderCutter();
+  }
+});
+
+cutterHomeBtn.addEventListener("click", async () => {
+  const c = state.cutter;
+  if (!c.session || c.job || c.busyOp) return;
+  c.error = null;
+  c.busyOp = true;
+  c.statusText = "Homing…";
+  renderCutter();
+  try {
+    await c.session.home();
+    c.statusText = "Homed";
+  } catch (e) {
+    c.statusText = null;
+    c.error = errorText(e);
+  } finally {
+    c.busyOp = false;
+    renderCutter();
+  }
+});
+calCutBtn.addEventListener("click", () => void runCutterJob("calibration"));
+dryRunBtn.addEventListener("click", () => void runCutterJob("sheet", "auto", true));
+
+calSheetBtn.addEventListener("click", () => {
+  const sheet = currentSheet();
+  printSvg(buildCalibrationSVG(sheet, state.regmarkStyle));
+});
+
+copyLogBtn.addEventListener("click", async () => {
+  const log = state.cutter.log;
+  if (!log) return;
+  const text = `Shadow Garage cutter log, ${new Date().toISOString()}\n${navigator.userAgent}\n${location.href}\n\n${log.format()}\n`;
+  try {
+    await navigator.clipboard.writeText(text);
+    copyLogBtn.textContent = "Copied";
+  } catch {
+    // Clipboard blocked: fall back to downloading it.
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "cutter-log.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+    copyLogBtn.textContent = "Downloaded";
+  }
+  setTimeout(() => (copyLogBtn.textContent = "Copy log"), 1500);
+});
+
+manualRegBtn.addEventListener("click", () => {
+  const kind = state.cutter.manualRetryKind;
+  if (kind) void runCutterJob(kind, "manual", state.cutter.manualRetryDryRun);
+});
+
+jogPad.addEventListener("click", async (e) => {
+  const btn = (e.target as HTMLElement).closest("button[data-jog]") as HTMLButtonElement | null;
+  const c = state.cutter;
+  if (!btn || !c.jog) return;
+  const [dx, dy] = btn.dataset.jog!.split(",").map(Number);
+  try {
+    await c.jog.jog.move(dx * c.jogStepMm, dy * c.jogStepMm);
+  } catch (err) {
+    c.error = errorText(err);
+  }
+  renderCutter();
+});
+
+jogStepBtn.addEventListener("click", () => {
+  state.cutter.jogStepMm = state.cutter.jogStepMm === 1 ? 5 : 1;
+  renderCutter();
+});
+
+jogRegisterBtn.addEventListener("click", () => {
+  const jog = state.cutter.jog;
+  state.cutter.jog = null;
+  jog?.resolve();
+  renderCutter();
+});
+
+jogCancelBtn.addEventListener("click", abortCutterJob);
+
+sendToCutterBtn.addEventListener("click", () => {
+  if (state.cutter.job) abortCutterJob();
+  else void runCutterJob("sheet");
+});
+
+if (webUsbSupported()) {
+  navigator.usb.addEventListener("disconnect", (e) => {
+    const session = state.cutter.session;
+    if (!session || !(session.transport instanceof WebUsbTransport) || session.transport.device !== e.device) return;
+    abortCutterJob();
+    state.cutter.session = null;
+    state.cutter.statusText = null;
+    state.cutter.error = "The cutter was unplugged.";
+    void session.close();
+    renderCutter();
+  });
+}
 
 // ---- initial render ----
 render();

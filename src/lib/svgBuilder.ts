@@ -31,15 +31,18 @@ function stickerGroup(design: DesignResult, x: number, y: number, opts: RenderOp
   return { print: `<g>${printParts.join("")}</g>`, cut };
 }
 
-/** Single-sticker SVG, sized exactly to the sticker's own bounding box. Used for the main preview + single-item export. */
-export function buildSingleStickerSVG(design: DesignResult, opts: RenderOptions): string {
+/**
+ * Single-sticker SVG, sized exactly to the sticker's own bounding box. Used for the main preview +
+ * single-item export. includeCutLines=false leaves out the red cut outline (for printing).
+ */
+export function buildSingleStickerSVG(design: DesignResult, opts: RenderOptions, includeCutLines = true): string {
   const w = design.actualWmm;
   const h = design.actualHmm;
   const { print, cut } = stickerGroup(design, 0, 0, opts, 0);
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}mm" height="${h}mm" viewBox="0 0 ${w} ${h}">`,
     `<g id="print">${print}</g>`,
-    `<g id="cutlines">${cut}</g>`,
+    includeCutLines ? `<g id="cutlines">${cut}</g>` : "",
     `</svg>`,
   ].join("");
 }
@@ -51,8 +54,16 @@ export interface SheetItem {
   opts: RenderOptions;
 }
 
-/** Full-sheet SVG placing each item (possibly different designs) at its packed position. Used for Sheet Preview + sheet export. */
-export function buildSheetSVG(items: SheetItem[], sheet: SheetSize, regmarks: false | "standard" | "four_corner" = false): string {
+/**
+ * Full-sheet SVG placing each item (possibly different designs) at its packed position. Used for
+ * Sheet Preview + sheet export. includeCutLines=false leaves out the red cut outlines (for printing).
+ */
+export function buildSheetSVG(
+  items: SheetItem[],
+  sheet: SheetSize,
+  regmarks: false | "standard" | "four_corner" = false,
+  includeCutLines = true
+): string {
   const prints: string[] = [];
   const cuts: string[] = [];
   items.forEach((item, i) => {
@@ -62,9 +73,9 @@ export function buildSheetSVG(items: SheetItem[], sheet: SheetSize, regmarks: fa
   });
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${sheet.widthMm}mm" height="${sheet.heightMm}mm" viewBox="0 0 ${sheet.widthMm} ${sheet.heightMm}">`,
-    `<rect x="0" y="0" width="${sheet.widthMm}" height="${sheet.heightMm}" fill="white"/>`,
+    `<rect x="0" y="0" width="${sheet.widthMm}" height="${sheet.heightMm}" class="sheet-paper" fill="white"/>`,
     `<g id="print">${prints.join("")}</g>`,
-    `<g id="cutlines">${cuts.join("")}</g>`,
+    includeCutLines ? `<g id="cutlines">${cuts.join("")}</g>` : "",
     regmarks ? buildRegmarksSVG(sheet.widthMm, sheet.heightMm, regmarks === "four_corner") : "",
     `</svg>`,
   ].join("");

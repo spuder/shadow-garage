@@ -478,3 +478,268 @@ general SVG-stroke-to-line-segments approach.
 - Cricut/Silhouette native project-file formats — SVG/PDF only.
 - Non-outer-silhouette (hole-aware) cutting — intentionally out of scope per real-world
   vinyl sticker cutting practice (see `src/lib/trace.ts` component tracing).
+
+## 11. Send to cutter (Silhouette Cameo 3 over WebUSB) — built, not yet hardware-verified
+
+Cuts the packed sheet directly from Chrome/Edge, replacing "export, then open another program."
+Setup and usage are in `docs/cutter-setup.md`.
+
+**Decisions:**
+- **Cameo 3 only, USB only, Linux + macOS first.** USB was picked over Bluetooth for v1: it works
+  on both target platforms (macOS with no setup, Linux with one udev rule), has no pairing step,
+  and is the path inkscape-silhouette exercises most. Bluetooth Classic on the Cameo 3 would go
+  through Web Serial (RFCOMM), not Web Bluetooth; it's the planned v2 and also the only way to reach
+  Windows without a driver swap, since Windows' `usbprint.sys` blocks WebUSB on printer-class
+  devices. Open question for v2: which RFCOMM service UUID the Cameo 3 advertises (upstream
+  connects to raw channel 1; Web Serial selects by UUID).
+- **AutoBlade + white sticker paper only** — one fixed preset in `materials.ts`, no picker.
+- **Always cuts the sheet layout** (what the PDF prints), regardless of the active tab — a lone
+  sticker from the Design tab has no printed counterpart to align to.
+- Protocol reverse-engineered from inkscape-silhouette's `Graphtec.py` (GPL-2.0), studied rather
+  than vendored, same as `regmarks.ts`.
+
+**Structure** (`src/lib/cutter/`), layered so more models/manufacturers are mostly data:
+- `transport.ts` — byte-pipe interface; `webUsbTransport.ts` implements it. WebUSB `transferIn`
+  can't be cancelled, so one read loop runs continuously into a `ByteQueue` and reads wait on that
+  (a timed-out `transferIn` would otherwise swallow the next reply).
+- `protocol.ts` — protocol interface; `graphtec.ts` implements Silhouette's GPGL (pure command
+  builders + a `GraphtecProtocol` class). Future HPGL cutters plug in here.
+- `models.ts` (device registry: USB ids, bed, mat, mark style, ranges), `materials.ts`.
+- `job.ts` — sheet items → ordered, closed, 1mm-overcut polylines; `layoutJob()` maps sheet mm to
+  device mm (mark-relative when marks are on) and rejects sheets that don't fit the mat or mark
+  styles the model can't read. `regmarks.ts` gained `regmarkLayout()` so the SVG and the cutter's
+  mark search share one definition of where the marks are.
+- `session.ts` — handshake on connect, then per job: wait for ready (prompts to load the mat) →
+  setup → mark search → cut in ≤1KB packets, polling status between packets → park.
+
+**Verified:** `npm test` (vitest, new) covers the command builders, job geometry and the session
+state machine against a scripted fake device, including a golden test asserting our full command
+stream equals inkscape-silhouette's own dry-run transcript for the same job. The UI flow was driven
+end-to-end in headless Chromium against a simulated Cameo 3 injected as `navigator.usb` (connect,
+cut, wrong-mark-style error, marks-not-found error, disconnect, unsupported browser).
+
+**Not verified (needs the real cutter):** that Chrome can claim the device on macOS/Linux; the
+sticker-paper pressure/speed/depth (upstream's "Sticker Sheet" defaults: 20/10/1); the mark-relative
+coordinate sign convention on a real print-and-cut (target: cut within ~0.5mm of the print); and
+whether ESC EOT (Abort) lifts the blade immediately.
+
+**Noted, out of scope:** the printed PDF includes the red cut line, so any misalignment shows as a
+red edge — a "hide cut lines when printing" option would be a separate small change.
+
+### 11a. First hardware test — marks found, cut scaled down (open)
+
+Real Cameo 3 test: Chrome claimed the device and the automatic mark scan succeeded, but the cut was
+the right shape at about half size or less, narrower more than shorter. The print was at 100% on
+Letter, with Letter selected in the app.
+
+- **Ruled out, app side:** a traced 3.00 in sticker at sheet (30, 30) mm is sent as exactly
+  76.2 mm wide at mark-relative (20, 20). Checked end-to-end in headless Chromium, and now also
+  covered by a unit test in `job.test.ts`. The marks match upstream's renderer geometry exactly,
+  and the command stream matches upstream's transcript. So the scaling happens in the cutter's
+  registration transform (or its units).
+- **Prime suspect:** the order of the mark distances in `TB123` / `TB23`. Graphtec.py sends
+  height first; upstream's `Commands.md` Silhouette Studio trace shows width first. This is now
+  a per-model field (`regmarkArgOrder` in `models.ts`), with a `?regmarkArgs=width_height` URL
+  override for testing. The Cameo 3 keeps upstream's height-first order until hardware says
+  otherwise.
+- **Diagnostics added:**
+  - `LoggingTransport` records every command and reply, keeping the start of the session so long
+    jobs can't push out the handshake and mark search. Replies that arrive but are never read
+    (e.g. the extra ones after a mark search) are logged as "unread". Exposed via **Copy log**.
+  - Calibration sheet + calibration cut (`calibration.ts`): a 140×200 mm printed rectangle and the
+    identical cut, which gives the X/Y scale and offset with a ruler.
+- **Mark misses:** the scan window isn't configurable; the scan looks near where each mark should
+  be. The "marks not found" error now gives a loading checklist. After a miss, an experimental
+  manual registration jogs the blade onto the top-left mark (`M` moves, 1/5 mm steps) and sends
+  `TB23`. Unconfirmed on hardware; drop it if the Cameo 3 doesn't accept it.
+- **Next:** measure the Test cut square (10 mm means units are fine) and the calibration cut
+  with each argument order, then fix `regmarkArgOrder` (or units) for the Cameo 3 and update the
+  golden test to note the deliberate difference from upstream.
+
+**Homing (added after the second hardware report).** The user saw the mark search start from
+wherever the carriage was, and the AutoBlade's depth-setting taps land on the paper. We never
+homed: the handshake and Abort send `ESC EOT` (initialize), which apparently re-zeroes coordinates
+at the carriage's current position, and Graphtec.py doesn't home either. Silhouette Studio's
+documented startup sequence (upstream `Commands.md`) sends `TT`, "home the cutter". Every job now
+runs: mat check → home (`model.homeCommand`, `TT` for the Cameo 3, then wait until ready) → setup
+→ registration → cut. There's also a **Home** button, and `?homeCmd=TT|H|none` in case the
+Cameo 3 ignores `TT`. This is the one deliberate difference from upstream's transcript in the
+golden test. Homing from the wrong origin might also explain the half-size cut; unconfirmed.
+
+**Follow-up:** `TT` did nothing visible on the real Cameo 3, so homing is now off by default
+(`homeCommand: null`; the golden test matches upstream exactly again) and the Home button only
+shows when `?homeCmd=` picks a command. New clue: the AutoBlade depth taps (which should land in
+the holes on the left of the deck) land about an inch to the right, on the paper, so the cutter's
+position reference is off by about an inch. To bisect this on hardware without a code round trip
+per guess, `?debug=1` adds a raw-command console (`CutterSession.sendRaw`, logged). The experiment
+list is in `docs/cutter-setup.md`.
+
+**Root cause of the drifting taps (likely).** Hardware result: right after connecting, the AutoBlade
+tapped into its adjust holes correctly; the next job in the same connection was about 1/4 in too far
+right, and the offset kept growing across jobs. inkscape-silhouette runs `setup()` → `initialize()`
+(`ESC EOT`, `FG`, `TB71`, `FA`, `TC`) at the start of every job, because each run is a fresh
+process. We only did it once, on connect, so every later job inherited position state from the
+previous one (plausibly the registration-mark origin). `CutterSession.run` now re-initializes first.
+Each job's command stream is now byte-for-byte one upstream run: the golden test compares a job's
+stream alone, and a new test checks that back-to-back jobs each start with `ESC EOT`. This also
+corrects the earlier guess that `ESC EOT` re-zeroes coordinates at the carriage's current position:
+the reset is what makes the first job right.
+
+**Fresh mat load before each print-and-cut job.** After the per-job reset, the taps were right
+(10 in a row) but the mark scan got worse on every run. It barely pulled the paper in and failed at
+the first mark, on default settings. Diagnosis: the reset re-references the paper axis to wherever
+the mat currently is. Only loading measures the real paper edge. Two things leave the mat away from
+its loaded position: our end-of-job park (mark-relative `M0,0` = the mark origin, about 1 cm down
+the sheet) and a failed or aborted job. So each later search started further down, past the first
+mark. `CutterSession` now tracks `matMoved`. It's set once a job starts sending commands, and by
+Home and raw commands. A job with registration marks then first waits (up to 5 min) for the
+cutter's status to go unloaded (`2`) and then ready (`0`), before its reset. Cut-only test cuts
+are exempt. This matches the real workflow: new printed sheet, new load.
+
+**Reset with the mat out, and retry the scan.** Requiring a reload didn't help: the scan still
+started near the paper's top edge. Timeline of the hardware tests:
+- First test: the only reset was on connect, likely before loading. The marks were found.
+- Per-job reset after load: the scan went wrong.
+- Reload, then reset after load: still wrong.
+
+So on the Cameo 3 a reset with the mat **in** re-zeroes the paper axis at the mat's loaded
+position, which is higher than where the scan needs to start. inkscape-silhouette resets after load
+too; this may be what its issue #82 describes. The reset is still needed for the carriage (X)
+reference, as the tap drift showed. Print-and-cut jobs now do: unload (if the mat is in) → reset →
+load → setup → scan. `resetWithMatOut` is armed by the connect-time status check (mat out when
+connecting) and disarmed by any job, Home or raw command. Test cuts keep reset-after-load, since
+only X matters there. The golden test is back to comparing connect + job against one upstream run.
+
+`TB123` is one-shot, so `searchWithRetries` re-sends it with its start moved down the sheet by
+`model.regmarkSearchStepsMm` (Cameo 3: 0, 3, 5, 7 mm). The retries apply only to "not found" and
+the 40 s timeout. There are two new tuning switches: `?scanOffset=` (base start offset) and
+`?scanSteps=`.
+
+**Idle mat watch.** The previous version made the user click Send before loading, which was
+backwards. `CutterSession.startMatWatch()` now polls the status every 1.5 s while idle. The polls
+are quiet (`LoggingTransport.quietly`) and in/out changes are logged as notes. The moment the mat
+comes out, it resets the cutter (arming `resetWithMatOut`). So the normal flow works: unload the
+finished sheet, load the next, send, with no prompts. Jobs, Home and raw commands wait for an
+in-flight poll to finish before starting (`acquire`). The in-job unload → reset → load prompts
+remain only as the fallback for connecting with the mat already in. The status line shows the
+mat state.
+
+**"Take the mat out" loop.** On hardware, the in-job unload prompt never finished. Most likely the
+Cameo 3 doesn't report `2` (upstream's "unloaded") when its mat is out. Upstream only knows 0, 1
+and 2 and aborts a job on anything else. The prompt now has a **The mat is out — continue** button
+(`CutterSession.confirmMatOut`), so a wrong or unknown status can't trap the user. The raw status
+replies during that wait are in the log. Once the user's log shows the real code, it goes into
+`parseStatus` so both the prompt and the idle mat watch recognise it automatically.
+
+**Print-and-cut working on hardware.** With reset-with-the-mat-out and scan retries, the Cameo 3
+found the marks on the second attempt (3 mm further down) and cut the calibration target "almost
+perfectly". The half-size cut is gone, so it came from the same wrong position reference and not
+from the `TB123` argument order: the default `height_width` is confirmed. The failed first attempt
+left an error on the cutter's own display, so the Cameo 3 now starts its scan 3 mm lower
+(`regmarkScanOffsetMm: 3`) and retries in 2 mm steps (`[0, 2, 4, 6]`). The golden test compares
+against upstream with a zero offset. Still open: the Cameo 3's real "mat out" status code (needs a
+log), and tuning the sticker-paper blade settings.
+
+**Incident: carriage crash, and the mat-state work removed.** The Cameo 3 (firmware V1.40) log
+showed status `0` ("ready") on every poll, including with the mat out. The mat-state features of
+the last few iterations all rested on status `2` meaning "mat out", which this cutter never
+sends:
+- require a fresh load;
+- reset with the mat out, then load;
+- the idle mat watch;
+- the "mat is out — continue" button.
+
+Through that button, the unload → reset → load flow then drove the cutter with **no mat**. After
+the reset, "wait for the mat to be loaded" passed instantly on the bogus `0`, so setup and the mark
+scan ran on an empty cutter. It ejected the paper and ran the carriage into the right side. The
+user then pressed the button with the mat still **in**, i.e. reset with the mat loaded, and the job
+worked perfectly with the scan starting 3 mm lower. So the earlier "reset with the mat out" theory
+was wrong, drawn from runs that also had the scan-start problem.
+
+Removed: all of the mat-state machinery above (`resetWithMatOut`, `startMatWatch`,
+`confirmMatOut`, `waitForStatus`, `LoggingTransport.quietly`, the mat-out button and the mat
+in/out status line).
+
+What remains is the sequence that worked: status check → reset (`ESC EOT` with the mat loaded,
+every job) → setup → mark scan (3 mm lower, 2 mm retries) → cut → park. The status check stays but
+is documented as unable to detect a missing mat. The UI and docs tell the user to load the mat
+before sending.
+
+Lesson: don't build flows that move hardware on a status signal that hasn't been confirmed on the
+device. Read the log first.
+
+**Second crash: registration is unreliable run to run.** A real sheet job (a 50 mm square at sheet
+(30,30) mm, printed on plain paper) found the marks at the first try. The cutter then cut a
+~38 × 13 mm rectangle far too high, partly off the paper, and the user cut the power. The user's
+PDF confirms the layout (marks at the standard positions, outline at 30–80 mm), and the log
+confirms the commands (mark-relative 20–70 mm = 400–1400 SU). So the app's geometry was right and
+the cutter's own registration transform was wrong. The calibration cut, through the same code
+path, had been spot on. The cause is unknown: no artwork could have been mistaken for a mark. Next
+step is diagnosis without risk. **Dry run** (`CutJob.dryRun` → `pathCommands(..., bladeUp)`)
+runs the full job but turns every draw into a move, so the user can watch where the cutter
+thinks the outlines are. The docs now also say plainly that Abort can't be relied on to stop a
+buffered job: switch the cutter off.
+
+**Merged `master`** (sharp-corners toggle, native Print replacing Download PDF, corner-only
+registration keep-outs, README, GitHub Pages). Integration fixes:
+- The calibration sheet now prints through `printSvg` instead of the removed PDF export.
+- A print-only `.sheet-paper { fill: white !important }` rule keeps the dark-mode grey preview
+  page off paper. The on-screen rule is also scoped to `#viewportInner`, and `#printArea` sits
+  outside it.
+- With marks on, packing keeps at least `REGMARK_ORIGIN_MM + 2` (12 mm) from the edges
+  (`packingMarginMm()`). Master's 8 mm margin would put stickers outside the area the cutter can
+  cut after registration (between the marks, 10 mm in), and every print-and-cut job would fail
+  with "outside the cutter's allowed area".
+- The dev URL moved to `/shadow-garage/` (Vite `base`).
+
+**Paper types choose cut settings.** Each `PaperType` now carries its `cutMaterial`, and jobs use
+the selected type's instead of a hard-coded preset. The types are shown in two groups, "Adhesive
+sticker sheets" (names now end in "sticker") and "Plain paper (no adhesive)". There's a new
+**20 lb printer paper** type: `PRINTER_PAPER_20LB` with pressure 10, speed 5, AutoBlade 2. It's
+based on inkscape-silhouette's "Print Paper Light Weight" (media 132, pressure 5), with pressure
+raised and the blade deeper so it cuts through rather than scoring, and speed lowered because
+speed 10 / pressure 20 tore plain paper on the Cameo 3. All sticker types share `STICKER_PAPER`
+(renamed from `WHITE_STICKER_PAPER`). The Cutter panel shows the active settings.
+
+**Trimmed paper types** to White sticker, Clear sticker and 20 lb printer paper. Holographic,
+Matte black and Glossy silver only differed by the border colour, and that colour was printed: a
+fake lavender, black or grey border inked over the real material. They're removed.
+
+**Slower cutting, printable cut lines, packet markers.** The user saw layer shifts and reported
+the Cameo 3 "binding up". A stalled carriage loses steps, so everything after it shifts. Default
+speeds are halved: sticker 10 → 5, printer paper 5 → 3. A **Speed** slider in the Cutter panel
+overrides the paper type's speed (`state.cutSpeed`, reset when the paper type changes). The golden
+test pins speed 10 to match upstream's media-134 run. Print now leaves out the red cut lines
+unless **Print cut lines** is ticked (`buildSheetSVG`/`buildSingleStickerSVG` take
+`includeCutLines`); Download SVG always keeps them. The log marks where each cut packet starts
+(`CutProgress.onPacket`), to check whether a shift lines up with one. `docs/cutter-setup.md` has
+an "If part of a job shifts" guide.
+
+**Dry run fix.** On the Cameo 3 a dry run traced only the first outline. The whole job went as one
+packet of back-to-back `M` moves; the cutter reported ready after ~2 s and silently dropped the
+rest, although draw packets of the same size run fine. Dry runs now send one move per write and
+wait for the carriage between moves. To keep that affordable, each outline is simplified to 1 mm
+for the dry run only (`DRY_RUN_TOLERANCE_MM`). A 43-sticker traced sheet went from 7,761 moves to
+1,099. Real cuts are unchanged.
+
+**Pause on the cutter, pressure slider, quieter log.** Dry run then traced all 11 squares, but the
+real cut on 20 lb printer paper (pressure 10, speed 3, blade 2) skipped about two stickers down
+and the user paused it on the Cameo 3's screen. While paused the cutter answers status `3`, which
+upstream doesn't know; it's now `"paused"`, shown as its own phase ("press Resume on its screen,
+or Abort here") and logged once on pause and once on resume. `waitForReady` also only times out
+after `timeoutMs` without progress: before, its 120 s deadline counted time spent moving, and that
+job's single packet already took 80 s, so a slower or bigger job would have failed mid-cut. The
+dry run over the same paths was clean, so the skipping points at blade drag: printer paper drops
+to pressure 6 (upstream uses 5), and a **Pressure** slider overrides the paper type's pressure like
+the Speed slider does. The log now collapses back-to-back identical status polls into one
+"status 1 repeated N more times over T s" line; an 80 s packet had added ~1,500 poll lines.
+
+**Tuned printer paper.** On a Cameo 3, 20 lb printer paper cut cleanly at pressure 1, speed 2
+(blade 2). (A pressure-sweep test cut was tried and removed once 1 / 1 proved right for every
+paper type.)
+
+**Per-sticker margin; minimum cut defaults.** Offset margin ("space around artwork") and Preserve
+sharp corners are now stored on each `StickerDesign`. The controls edit the selected sticker (the
+block title names it when there's more than one), and a new sticker starts from the last values
+chosen (`state.marginMm` / `state.preserveSharpCorners`). Every cut material now defaults to
+pressure 1, speed 1, confirmed on a Cameo 3; the golden test pins upstream's 20 / 10 explicitly.
