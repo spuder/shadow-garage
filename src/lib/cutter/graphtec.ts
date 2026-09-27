@@ -23,7 +23,7 @@ import {
   type RegmarkSpec,
   type WaitOptions,
 } from "./protocol";
-import { TransportTimeoutError, type Transport } from "./transport";
+import { printable, TransportTimeoutError, type Transport } from "./transport";
 
 const ETX = 0x03;
 const ESC = 0x1b;
@@ -334,6 +334,30 @@ export class GraphtecProtocol implements CutterProtocol {
 
   async finish(): Promise<void> {
     await this.send(homeCommands());
+  }
+
+  async sendRaw(lines: string[], listenMs = 1500): Promise<string> {
+    this.drain();
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (line.toUpperCase() === "<ESC EOT>") await this.transport.write(escapeCommand(EOT));
+      else if (line.toUpperCase() === "<ESC ENQ>") await this.transport.write(escapeCommand(ENQ));
+      else await this.send([line]);
+    }
+    let replies = "";
+    const deadline = Date.now() + listenMs;
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      try {
+        replies += printable(await this.transport.read(remaining));
+      } catch (e) {
+        if (e instanceof TransportTimeoutError) break;
+        throw e;
+      }
+    }
+    return replies;
   }
 
   async abort(): Promise<void> {

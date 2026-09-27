@@ -45,10 +45,6 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
 4. Click **Connect**, then **Send to Cutter**. The cutter scans for the marks first; if it can't
    find them, nothing is cut — reload and send again.
 
-Every job first **homes** the cutter: the carriage travels to its home stop before the AutoBlade
-sets its depth and before the mark scan, so both happen at known positions. **Home** does just
-that step on its own.
-
 **Test cut** cuts a 10 mm square near the top-left corner without looking for marks — use a scrap
 sheet to check the blade settings before cutting a printed sheet.
 
@@ -77,10 +73,27 @@ trace suggests width first. To try the other order, open the app with `?regmarkA
 (for example `http://localhost:5183/?regmarkArgs=width_height`), reconnect, and run the
 calibration cut again. `?regmarkArgs=height_width` (the default) switches back.
 
-Homing uses the `TT` command, which Silhouette Studio sends at startup. If **Home** doesn't move
-the carriage, try `?homeCmd=H` (GPGL's generic Home), or `?homeCmd=none` to turn homing off.
+Homing is off by default: `TT` (from Silhouette Studio's startup sequence) did nothing on a real
+Cameo 3. `?homeCmd=H` tries GPGL's generic Home before every job and shows a **Home** button.
 Switches can be combined: `?regmarkArgs=width_height&homeCmd=H`. The log's first line shows which
 settings were used.
+
+### Diagnostics console
+
+Add `?debug=1` to the URL to get a raw-command box in the Cutter panel. It sends one command per
+line (`<ESC EOT>` and `<ESC ENQ>` for the two escape codes) and shows the cutter's reply;
+everything also goes into **Copy log**. Only use it with a scrap sheet loaded — `D` commands cut.
+
+**Current investigation — AutoBlade taps land about an inch right of the depth-adjust holes.** The
+Cameo 3 sets AutoBlade depth by tapping the blade into holes on the left of the deck; it's doing
+it about an inch to the right, on the paper. Run each experiment on scrap and note where it taps:
+
+0. Power the cutter off and on, load the mat, connect, and press **Test cut**. If the taps now hit
+   the holes, the offset came from earlier state (a run that was aborted or failed mid-sheet).
+1. `TF1,1` on its own (sets depth 1 on tool 1 — the tap routine).
+2. `TG0` then `TF1,1` (mat type "none" first).
+3. `TG1` then `TF1,1` (12×12 mat first — what a job sends).
+4. `H` on its own, then `M0,0` on its own: does either move the carriage to the left?
 
 ## Current limitations
 

@@ -54,6 +54,11 @@ export interface CutterProtocol {
   cut(paths: Contour[], frame: CutFrame, progress?: CutProgress): Promise<void>;
   /** Parks the tool after a job. */
   finish(): Promise<void>;
+  /**
+   * Diagnostics: sends hand-typed commands (one per line; "<ESC EOT>" / "<ESC ENQ>" for escapes)
+   * and returns whatever the cutter replies within listenMs, in printable form.
+   */
+  sendRaw(lines: string[], listenMs?: number): Promise<string>;
   /** Best-effort emergency stop. */
   abort(): Promise<void>;
 }

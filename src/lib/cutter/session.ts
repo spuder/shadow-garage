@@ -122,8 +122,10 @@ export class CutterSession {
       });
       // Home before setup and registration: ESC EOT re-initializes coordinates wherever the carriage
       // happens to be, so without this the AutoBlade depth tap and the mark search start off-position.
-      events.onPhase?.("homing");
-      await this.protocol.home();
+      if (this.model.homeCommand) {
+        events.onPhase?.("homing");
+        await this.protocol.home();
+      }
       events.onPhase?.("setup");
       await this.protocol.setup(job.material);
       if (job.regmarks && job.registration === "manual") {
@@ -166,6 +168,17 @@ export class CutterSession {
     this.log.note("home");
     try {
       await this.protocol.home();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Diagnostics console: raw commands in, printable replies out (both also go to the log). */
+  async sendRaw(lines: string[], listenMs?: number): Promise<string> {
+    if (this.busy) throw new Error("The cutter is busy");
+    this.busy = true;
+    try {
+      return await this.protocol.sendRaw(lines, listenMs);
     } finally {
       this.busy = false;
     }

@@ -35,7 +35,7 @@ interface CutterUiState {
   manualRetryKind: CutKind | null; // set when the mark search failed, to offer manual registration
   jog: { jog: ManualJog; resolve: () => void; reject: (e: Error) => void } | null; // manual registration in progress
   jogStepMm: 1 | 5;
-  homing: boolean; // Home button in progress
+  busyOp: boolean; // Home button or raw diagnostics command in progress
 }
 
 interface StickerDesign {
@@ -92,7 +92,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
-  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, homing: false },
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, busyOp: false },
 };
 
 applyTheme(state.theme);
@@ -144,6 +144,11 @@ const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement
 const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
 const cutterTestBtn = document.getElementById("cutterTestBtn") as HTMLButtonElement;
 const cutterHomeBtn = document.getElementById("cutterHomeBtn") as HTMLButtonElement;
+const rawBlock = document.getElementById("rawBlock") as HTMLDivElement;
+const rawInput = document.getElementById("rawInput") as HTMLTextAreaElement;
+const rawSendBtn = document.getElementById("rawSendBtn") as HTMLButtonElement;
+const rawReplyEl = document.getElementById("rawReply") as HTMLPreElement;
+const CUTTER_DEBUG = new URLSearchParams(location.search).has("debug");
 const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
@@ -922,7 +927,7 @@ function errorText(e: unknown): string {
 function renderCutter() {
   const c = state.cutter;
   const supported = webUsbSupported();
-  const running = c.job !== null || c.homing;
+  const running = c.job !== null || c.busyOp;
 
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
   else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
@@ -933,7 +938,10 @@ function renderCutter() {
   cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
   cutterConnectBtn.disabled = !supported || c.connecting || running;
   cutterTestBtn.disabled = !c.session || running;
+  cutterHomeBtn.hidden = !c.session?.model.homeCommand;
   cutterHomeBtn.disabled = !c.session || running;
+  rawBlock.hidden = !CUTTER_DEBUG;
+  rawSendBtn.disabled = !c.session || running;
   calCutBtn.disabled = !c.session || running;
   copyLogBtn.disabled = !c.log;
   manualRegBtn.hidden = !c.manualRetryKind || !c.session || running;
@@ -948,7 +956,7 @@ function renderCutter() {
   cutterErrorEl.textContent = c.error ?? "";
 
   sendToCutterBtn.textContent = c.job ? "Abort" : "Send to Cutter";
-  sendToCutterBtn.disabled = c.homing || (!c.job && (!c.session || state.designs.length === 0));
+  sendToCutterBtn.disabled = c.busyOp || (!c.job && (!c.session || state.designs.length === 0));
 }
 
 async function connectCutter() {
@@ -1026,7 +1034,7 @@ function waitForManualRegistration(jog: ManualJog): Promise<void> {
 async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "auto") {
   const c = state.cutter;
   const session = c.session;
-  if (!session || c.job || c.homing) return;
+  if (!session || c.job || c.busyOp) return;
   c.error = null;
   c.manualRetryKind = null;
 
@@ -1086,11 +1094,34 @@ cutterConnectBtn.addEventListener("click", () => {
 
 cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
 
+rawSendBtn.addEventListener("click", async () => {
+  const c = state.cutter;
+  if (!c.session || c.job || c.busyOp) return;
+  const lines = rawInput.value.split("\n").filter((l) => l.trim());
+  if (lines.length === 0) return;
+  c.error = null;
+  c.busyOp = true;
+  c.statusText = "Sending…";
+  renderCutter();
+  try {
+    const reply = await c.session.sendRaw(lines);
+    rawReplyEl.textContent = reply ? `Reply: ${reply}` : "No reply within 1.5 s";
+    rawReplyEl.hidden = false;
+    c.statusText = null;
+  } catch (e) {
+    c.statusText = null;
+    c.error = errorText(e);
+  } finally {
+    c.busyOp = false;
+    renderCutter();
+  }
+});
+
 cutterHomeBtn.addEventListener("click", async () => {
   const c = state.cutter;
-  if (!c.session || c.job || c.homing) return;
+  if (!c.session || c.job || c.busyOp) return;
   c.error = null;
-  c.homing = true;
+  c.busyOp = true;
   c.statusText = "Homing…";
   renderCutter();
   try {
@@ -1100,7 +1131,7 @@ cutterHomeBtn.addEventListener("click", async () => {
     c.statusText = null;
     c.error = errorText(e);
   } finally {
-    c.homing = false;
+    c.busyOp = false;
     renderCutter();
   }
 });

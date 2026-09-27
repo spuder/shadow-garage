@@ -34,6 +34,7 @@ export interface CutterModel {
    * Command that physically homes the carriage before a job, so the AutoBlade depth tap and the
    * mark search start from a known position. Silhouette Studio's startup sequence (upstream
    * Commands.md) sends TT; GPGL also has H. null = don't home (Graphtec.py's behaviour).
+   * On a real Cameo 3, TT had no visible effect, so it's off until a working command is found.
    */
   homeCommand: HomeCommand;
   pressureRange: [number, number];
@@ -56,7 +57,7 @@ export const CUTTER_MODELS: CutterModel[] = [
     marginTopMm: 0,
     regmarks: "standard",
     regmarkArgOrder: "height_width",
-    homeCommand: "TT",
+    homeCommand: null,
     pressureRange: [1, 33],
     speedRange: [1, 10],
     toolHolders: 2,

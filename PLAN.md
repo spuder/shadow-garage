@@ -501,3 +501,11 @@ runs: mat check → home (`model.homeCommand`, `TT` for the Cameo 3, then wait u
 → registration → cut. There's also a **Home** button, and `?homeCmd=TT|H|none` in case the
 Cameo 3 ignores `TT`. This is the one deliberate difference from upstream's transcript in the
 golden test. Homing from the wrong origin might also explain the half-size cut; unconfirmed.
+
+**Follow-up:** `TT` did nothing visible on the real Cameo 3, so homing is now off by default
+(`homeCommand: null`; the golden test matches upstream exactly again) and the Home button only
+shows when `?homeCmd=` picks a command. New clue: the AutoBlade depth taps (which should land in
+the holes on the left of the deck) land about an inch to the right, on the paper, so the cutter's
+position reference is off by about an inch. To bisect this on hardware without a code round trip
+per guess, `?debug=1` adds a raw-command console (`CutterSession.sendRaw`, logged). The experiment
+list is in `docs/cutter-setup.md`.
