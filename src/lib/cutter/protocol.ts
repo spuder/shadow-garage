@@ -85,6 +85,14 @@ export class CutterNotReadyError extends Error {
   }
 }
 
+/** The job was cancelled on the cutter's own screen; nothing more may be sent for it. */
+export class CutterCancelledError extends Error {
+  constructor() {
+    super("Cancelled on the cutter.");
+    this.name = "CutterCancelledError";
+  }
+}
+
 export class RegmarkNotFoundError extends Error {
   constructor(detail: string) {
     super(

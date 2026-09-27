@@ -14,6 +14,7 @@ import type { CutMaterial } from "./materials";
 import type { CutterModel, RegmarkArgOrder } from "./models";
 import {
   CutOutOfBoundsError,
+  CutterCancelledError,
   CutterNotReadyError,
   RegmarkNotFoundError,
   type CutFrame,
@@ -274,8 +275,13 @@ export class GraphtecProtocol implements CutterProtocol {
     let last: CutterStatus = "unknown";
     for (;;) {
       signal?.throwIfAborted();
+      const prev = last;
       last = await this.status();
       onStatus?.(last);
+      // Resume goes paused → moving. Cancel on the cutter's screen drops its buffer and goes straight
+      // to ready (or unloads the mat); treating that ready as "packet done" would send the next packet
+      // and start cutting again.
+      if (prev === "paused" && (last === "ready" || last === "unloaded")) throw new CutterCancelledError();
       if (last === "ready") return;
       // Only give up when nothing is happening: one packet of a slow cut can run well past the
       // timeout, and a pause on the cutter lasts as long as the user wants.

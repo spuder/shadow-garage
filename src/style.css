@@ -694,3 +694,8 @@ select {
     fill: white !important;
   }
 }
+.block-title-note {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}

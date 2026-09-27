@@ -12,7 +12,7 @@ import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from ".
 import { buildCalibrationSVG, calibrationPaths } from "./lib/cutter/calibration";
 import { buildCutPaths, CutJobError, layoutJob, testSquarePaths } from "./lib/cutter/job";
 import type { CutterModel } from "./lib/cutter/models";
-import { RegmarkNotFoundError } from "./lib/cutter/protocol";
+import { CutterCancelledError, RegmarkNotFoundError } from "./lib/cutter/protocol";
 import { CutterSession, type CutJob, type CutPhase, type ManualJog } from "./lib/cutter/session";
 import type { LoggingTransport } from "./lib/cutter/transport";
 import { reconnectUsbCutter, requestUsbCutter, webUsbSupported, WebUsbTransport } from "./lib/cutter/webUsbTransport";
@@ -49,6 +49,8 @@ interface StickerDesign {
   heightMm: number;
   aspectLocked: boolean;
   driveBy: "width" | "height"; // which axis is authoritative when aspect is locked (see design.ts)
+  marginMm: number; // space around the artwork, per sticker
+  preserveSharpCorners: boolean;
   design: DesignResult | null;
 }
 
@@ -57,7 +59,7 @@ interface AppState {
   paperTypeId: string;
   sheetIndex: number;
   fillMode: FillMode;
-  marginMm: number;
+  marginMm: number; // margin and sharp corners for the next sticker added: the last values chosen
   preserveSharpCorners: boolean;
   gapMm: number;
   sheetMarginMm: number;
@@ -136,6 +138,7 @@ const sheetSelect = document.getElementById("sheetSelect") as HTMLSelectElement;
 
 const marginSlider = document.getElementById("marginSlider") as HTMLInputElement;
 const marginValue = document.getElementById("marginValue") as HTMLSpanElement;
+const marginForEl = document.getElementById("marginFor") as HTMLSpanElement;
 const sharpCornersToggle = document.getElementById("sharpCornersToggle") as HTMLInputElement;
 const gapInput = document.getElementById("gapInput") as HTMLInputElement;
 const gapValue = document.getElementById("gapValue") as HTMLSpanElement;
@@ -318,9 +321,8 @@ function computeSheetItems(sheet: SheetSize): { placements: { id: string; x: num
 
 // ---- core recompute ----
 function recompute() {
-  const margin = state.marginMm;
   for (const d of state.designs) {
-    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, margin, d.aspectLocked, d.driveBy, state.preserveSharpCorners);
+    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, d.marginMm, d.aspectLocked, d.driveBy, d.preserveSharpCorners);
     // Keep the stored target in sync with what was actually achieved, so the next edit (a drag,
     // another text-box change) starts from reality instead of a stale/approximate guess.
     d.widthMm = d.design.actualWmm;
@@ -332,8 +334,12 @@ function recompute() {
 // ---- rendering ----
 function render() {
   // paper/sheet/margin/gap/fillMode control mirrors
-  marginValue.textContent = state.marginMm.toFixed(1);
-  sharpCornersToggle.checked = state.preserveSharpCorners;
+  const selForMargin = selectedDesign();
+  const margin = selForMargin?.marginMm ?? state.marginMm;
+  marginValue.textContent = margin.toFixed(1);
+  marginSlider.value = String(margin);
+  sharpCornersToggle.checked = selForMargin?.preserveSharpCorners ?? state.preserveSharpCorners;
+  marginForEl.textContent = selForMargin && state.designs.length > 1 ? `for ${selForMargin.fileName}` : "";
   gapValue.textContent = state.gapMm.toFixed(1);
   sheetSelect.value = String(state.sheetIndex);
   fillModeToggle.querySelectorAll("button").forEach((b) => {
@@ -763,7 +769,7 @@ function startResize(e: PointerEvent, design: StickerDesign, hd: (typeof HANDLE_
 
     design.widthMm = newW;
     design.heightMm = newH;
-    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, state.marginMm, true, "width", state.preserveSharpCorners);
+    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, design.marginMm, true, "width", design.preserveSharpCorners);
 
     // Live feedback: redraw in place without re-packing the sheet (positions would otherwise
     // jump around mid-drag as siblings reflow) — the real repack happens once on release.
@@ -819,6 +825,8 @@ async function handleFiles(files: FileList | File[]) {
           heightMm,
           aspectLocked: true,
           driveBy: "width",
+          marginMm: state.marginMm,
+          preserveSharpCorners: state.preserveSharpCorners,
           design: null,
         };
         state.designs.push(design);
@@ -880,13 +888,18 @@ sheetSelect.addEventListener("change", () => {
   recompute();
 });
 
+// Margin and sharp corners apply to the selected sticker, and become the default for new ones.
 marginSlider.addEventListener("input", () => {
   state.marginMm = parseFloat(marginSlider.value);
+  const sel = selectedDesign();
+  if (sel) sel.marginMm = state.marginMm;
   recompute();
 });
 
 sharpCornersToggle.addEventListener("change", () => {
   state.preserveSharpCorners = sharpCornersToggle.checked;
+  const sel = selectedDesign();
+  if (sel) sel.preserveSharpCorners = state.preserveSharpCorners;
   recompute();
 });
 
@@ -968,7 +981,7 @@ const CUT_PHASE_TEXT: Record<CutPhase, string> = {
   manualRegmarks: "Manual registration — position the blade",
   regmarks: "Finding registration marks…",
   cutting: "Cutting…",
-  paused: "Paused on the cutter — press Resume on its screen to continue, or Abort here",
+  paused: "Paused on the cutter — press Resume or Cancel on its screen",
   finishing: "Finishing…",
   done: "Done — unload the mat",
 };
@@ -1152,8 +1165,9 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
       controller.signal
     );
   } catch (e) {
-    c.statusText = controller.signal.aborted ? "Aborted" : null;
-    if (!controller.signal.aborted) c.error = errorText(e);
+    const cancelledOnCutter = e instanceof CutterCancelledError;
+    c.statusText = controller.signal.aborted ? "Aborted" : cancelledOnCutter ? "Cancelled on the cutter — nothing more was sent" : null;
+    if (!controller.signal.aborted && !cancelledOnCutter) c.error = errorText(e);
     if (e instanceof RegmarkNotFoundError && registration === "auto") {
       c.manualRetryKind = kind;
       c.manualRetryDryRun = dryRun;

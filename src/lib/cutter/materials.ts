@@ -12,31 +12,31 @@ export interface CutMaterial {
 }
 
 // Adhesive sticker sheets: a kiss cut through the sticker layer, leaving the backing intact.
-// Pressure and depth are inkscape-silhouette's "Sticker Sheet" entry (media 134), not yet tuned for
-// a clean kiss cut. Its speed 10 (the Cameo 3's maximum) made the carriage bind up and lose
-// position mid-job, shifting everything cut afterwards, so it's halved. Note: per upstream, a
-// pressure of 19 or more makes the Cameo run its track-enhancing roller pass automatically.
+// Depth is inkscape-silhouette's "Sticker Sheet" entry (media 134). Its pressure 20 / speed 10 made
+// the Cameo 3 bind up and lose position mid-job. Pressure 1 / speed 1 (the minimum) cuts cleanly on
+// a Cameo 3: the AutoBlade depth does the cutting. Note: per upstream, a pressure of 19 or more makes the
+// Cameo run its track-enhancing roller pass automatically.
 export const STICKER_PAPER: CutMaterial = {
   id: "sticker-paper",
   name: "Sticker paper",
   mediaId: 134,
-  pressure: 20,
-  speed: 5,
+  pressure: 1,
+  speed: 1,
   autoBladeDepth: 1,
 };
 
 // Plain 20 lb (75 g/m²) copy/printer paper: cut all the way through (there's no backing).
 // Based on inkscape-silhouette's "Print Paper Light Weight" (media 132, pressure 5), with the blade
-// out to 2 so it cuts through rather than scoring, and slowed to 3: at higher speeds plain paper
-// tore and the carriage bound up. Pressure 10 skipped partway down the sheet on a Cameo 3 while a
-// blade-up dry run of the same sheet was clean, so the blade was dragging; 6 is the new, untested
-// start. Tune it with the Pressure slider and Test cut.
+// out to 2 so it cuts through rather than scoring. At higher speeds plain paper tore and the
+// carriage bound up, and pressure 10 skipped partway down the sheet on a Cameo 3 while a blade-up
+// dry run of the same sheet was clean, so the blade was dragging. Pressure 1, speed 2 cut cleanly
+// on a Cameo 3 (the AutoBlade at 2 does the cutting); 1 / 1 does too, like every material.
 export const PRINTER_PAPER_20LB: CutMaterial = {
   id: "printer-paper-20lb",
   name: "20 lb printer paper",
   mediaId: 132,
-  pressure: 6,
-  speed: 3,
+  pressure: 1,
+  speed: 1,
   autoBladeDepth: 2,
 };
 

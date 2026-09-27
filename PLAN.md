@@ -733,3 +733,13 @@ dry run over the same paths was clean, so the skipping points at blade drag: pri
 to pressure 6 (upstream uses 5), and a **Pressure** slider overrides the paper type's pressure like
 the Speed slider does. The log now collapses back-to-back identical status polls into one
 "status 1 repeated N more times over T s" line; an 80 s packet had added ~1,500 poll lines.
+
+**Tuned printer paper.** On a Cameo 3, 20 lb printer paper cut cleanly at pressure 1, speed 2
+(blade 2). (A pressure-sweep test cut was tried and removed once 1 / 1 proved right for every
+paper type.)
+
+**Per-sticker margin; minimum cut defaults.** Offset margin ("space around artwork") and Preserve
+sharp corners are now stored on each `StickerDesign`. The controls edit the selected sticker (the
+block title names it when there's more than one), and a new sticker starts from the last values
+chosen (`state.marginMm` / `state.preserveSharpCorners`). Every cut material now defaults to
+pressure 1, speed 1, confirmed on a Cameo 3; the golden test pins upstream's 20 / 10 explicitly.

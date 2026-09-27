@@ -96,12 +96,12 @@ rather than move everything after it.
 
 1. **Which way did it move?** Sideways: the carriage lost position. Down the sheet: the mat
    slipped in the rollers.
-2. **Slow down.** Lower the **Speed** slider (try 3) and run it again. Binding up at speed is the
+2. **Slow down.** Every paper type defaults to speed 1, the minimum; if you raised the **Speed** slider, lower it and run again. Binding up at speed is the
    most common cause.
 3. **Run Dry run** on the same sheet. The blade stays up, so nothing drags. If the trace is clean
-   but the real cut skips, the blade is dragging: lower **Pressure** a step at a time (plain
-   paper 6 → 5 → 4, stickers 20 → 16 → 12) and check with **Test cut** that it still cuts
-   through. Also check the paper type matches the stock (**20 lb printer paper** for plain paper).
+   but the real cut skips, the blade is dragging: lower **Pressure** (every paper type already
+   defaults to the minimum of 1, which cuts cleanly; if you raised it, step back down) and check
+   with **Test cut** that it still cuts through. Also check the paper type matches the stock (**20 lb printer paper** for plain paper).
    If the dry run shifts too, look at the machine and mat.
 4. **Check the mat:** still tacky, pushed against the left guide as it loads, gripped by both
    pinch rollers (the right roller set to the 12 in mat position), with clear space behind the

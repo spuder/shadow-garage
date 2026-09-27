@@ -90,7 +90,7 @@
             </div>
 
             <div class="panel-block">
-              <div class="block-title">Offset Margin</div>
+              <div class="block-title">Offset Margin <span id="marginFor" class="block-title-note"></span></div>
               <label class="field-label">
                 Space around artwork: <span id="marginValue">1.0</span> mm
                 <input id="marginSlider" type="range" min="0.2" max="10" step="0.1" value="1" />
@@ -132,12 +132,12 @@
               <div id="cutterStatus" class="cutter-status">Not connected</div>
               <div id="cutterMaterial" class="hint-text cutter-material"></div>
               <label class="field-label cutter-speed">
-                Speed: <span id="cutSpeedValue">5</span> <span id="cutSpeedDefault" class="cutter-speed-default"></span>
-                <input id="cutSpeedSlider" type="range" min="1" max="10" step="1" value="5" />
+                Speed: <span id="cutSpeedValue">1</span> <span id="cutSpeedDefault" class="cutter-speed-default"></span>
+                <input id="cutSpeedSlider" type="range" min="1" max="10" step="1" value="1" />
               </label>
               <label class="field-label cutter-speed">
-                Pressure: <span id="cutPressureValue">20</span> <span id="cutPressureDefault" class="cutter-speed-default"></span>
-                <input id="cutPressureSlider" type="range" min="1" max="33" step="1" value="20" />
+                Pressure: <span id="cutPressureValue">1</span> <span id="cutPressureDefault" class="cutter-speed-default"></span>
+                <input id="cutPressureSlider" type="range" min="1" max="33" step="1" value="1" />
               </label>
               <div class="cutter-buttons">
                 <button id="cutterConnectBtn" class="btn-secondary small">Connect</button>

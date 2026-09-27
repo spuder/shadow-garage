@@ -4,7 +4,7 @@ import { cameo3Responder, FakeTransport } from "./fakeTransport";
 import { layoutJob, testSquarePaths } from "./job";
 import { STICKER_PAPER } from "./materials";
 import { modelById } from "./models";
-import { RegmarkNotFoundError } from "./protocol";
+import { CutterCancelledError, RegmarkNotFoundError } from "./protocol";
 import { CutterSession, type CutJob, type CutPhase } from "./session";
 
 const cameo3 = modelById("silhouette-cameo3")!;
@@ -49,8 +49,8 @@ describe("print-and-cut job", () => {
     // cuttingmat='cameo_12x12', autoblade=True, depth=1), then plot() of a 10mm square at sheet
     // (40,40) with regmark=True, regsearch=True, regwidth=195.9, reglength=259.4,
     // regorigin=(10,10), endposition='start'. Status polls (ESC ENQ) are omitted from both sides.
-    // Compared with upstream's scan start and media-134 speed (10); the Cameo 3 defaults start the
-    // scan 3 mm lower and cut at speed 5 (both tuned on hardware).
+    // Compared with upstream's scan start and media-134 speed and pressure (10, 20); the Cameo 3
+    // defaults start the scan 3 mm lower and cut at speed 1, pressure 1 (all tuned on hardware).
     const upstream = [
       "<ESC EOT>", "FG", "TB71", "FA", "TC",
       "TG1", "FN0", "TB50,0", "\\0,0", "Z6096,6096", "J1", "!10,1", "FX20,1", "FE0,1",
@@ -62,7 +62,7 @@ describe("print-and-cut job", () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, { ...cameo3, regmarkScanOffsetMm: 0 });
     t.writes.length = 0; // each job re-initializes, so a job alone is one full upstream run
-    await session.run({ ...job(true), material: { ...STICKER_PAPER, speed: 10 } });
+    await session.run({ ...job(true), material: { ...STICKER_PAPER, speed: 10, pressure: 20 } });
     expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
   });
 
@@ -311,6 +311,31 @@ describe("pause on the cutter", () => {
     const text = session.log.format();
     expect(text.match(/## paused on the cutter/g)).toHaveLength(1);
     expect(text.match(/## resumed/g)).toHaveLength(1);
+  });
+});
+
+describe("cancel on the cutter", () => {
+  // A job big enough to need several packets, so there's a "next packet" that must not be sent.
+  const manySquares = () => Array.from({ length: 60 }, (_, i) => testSquarePaths(40 + (i % 10) * 12, 40 + Math.floor(i / 10) * 12, 5, 0)[0]);
+
+  it.each([["ready", "0"], ["mat unloaded", "2"]])("stops sending when a pause ends in %s without moving", async (_, after) => {
+    vi.useFakeTimers();
+    // Check before the job, then the first packet: moving, paused, then cancelled on the screen.
+    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "1", "3", "3", after] }));
+    const session = await CutterSession.open(t, cameo3);
+    t.writes.length = 0;
+    const phases: CutPhase[] = [];
+    const run = session.run({ ...job(false), paths: manySquares() }, { onPhase: (p) => phases.push(p) });
+    const settled = expect(run).rejects.toBeInstanceOf(CutterCancelledError);
+    await vi.advanceTimersByTimeAsync(5000);
+    await settled;
+    const log = t.log.filter((c) => c !== "<ESC ENQ>");
+    const packetStarts = log.filter((c, i) => c.startsWith("M") && log[i - 1]?.startsWith("D")).length;
+    expect(session.log.format()).toMatch(/## packet 1\/\d+ starts/);
+    expect(session.log.format()).not.toMatch(/## packet 2\/\d+ starts/);
+    expect(packetStarts).toBeGreaterThan(0); // sanity: the first packet itself had several squares
+    expect(log).not.toContain("L0"); // no park either: the cutter is left alone
+    expect(phases).not.toContain("done");
   });
 });
 
