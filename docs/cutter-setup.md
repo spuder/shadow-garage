@@ -51,8 +51,10 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
    print-and-cut job asks you to take it out and load it again, once. If that prompt doesn't
    notice the mat is out, press **The mat is out — continue** (and send the log: it shows the
    status code your cutter reports).
-6. The mark scan is one-shot on the cutter, so if it misses, the app retries starting 3, 5 and
-   7 mm further down the sheet before giving up.
+6. The mark scan is one-shot on the cutter. On the Cameo 3 it starts 3 mm lower than
+   inkscape-silhouette's default (tuned on hardware), and if it misses, the app retries 2, 4 and
+   6 mm further down before giving up. A miss leaves an error on the cutter's own screen even if a
+   retry then succeeds; that's cosmetic.
 
 **Test cut** cuts a 10 mm square near the top-left corner without looking for marks — use a scrap
 sheet to check the blade settings before cutting a printed sheet.
@@ -102,10 +104,10 @@ taps still drift, send the log from two back-to-back test cuts.
 
 ## Current limitations
 
-- **Known issue:** on the first real print-and-cut test, the marks were found but the cut came out
-  about half size or smaller (narrower more than shorter). The app's own geometry has been
-  verified to be correct, so the scaling happens in the cutter's registration step; the
-  calibration cut above is how it's being pinned down.
+- **Mat detection:** the Cameo 3 doesn't seem to report the mat being out with the status code the
+  app expects, so the "take the mat out" prompt needs **The mat is out — continue**, and the
+  automatic reset when the mat comes out doesn't trigger yet. A log from a session where you take
+  the mat out will show the real code.
 - The sticker-paper pressure, speed and blade depth (`src/lib/cutter/materials.ts`) are
   inkscape-silhouette's defaults and still need tuning for a clean kiss cut.
 - Letter and A4 sheets only — A3 doesn't fit on the 12×12 mat.

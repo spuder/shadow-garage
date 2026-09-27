@@ -62,8 +62,9 @@ describe("print-and-cut job", () => {
       "M600,600", "D600,800", "D800,800", "D800,600", "D600,600",
       "L0", "\\0,0", "M0,0", "J0", "FN0", "TB50,0",
     ];
+    // Compared with upstream's scan start; the Cameo 3 default starts 3 mm lower (tuned on hardware).
     const t = new FakeTransport(cameo3Responder());
-    const session = await CutterSession.open(t, cameo3);
+    const session = await CutterSession.open(t, { ...cameo3, regmarkScanOffsetMm: 0 });
     await session.run(job(true));
     expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
   });
@@ -168,6 +169,13 @@ describe("print-and-cut job", () => {
     expect(session.isBusy).toBe(false);
   });
 
+  it("starts the Cameo 3's scan 3 mm lower than upstream by default", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    await session.run(job(true));
+    expect(t.log).toContain("TB123,5188,3918,60,0");
+  });
+
   it("uses the model's mark-distance order and scan offset", async () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, { ...cameo3, regmarkArgOrder: "width_height", regmarkScanOffsetMm: 5 });
@@ -184,10 +192,10 @@ describe("mark search retries", () => {
     await session.run(job(true), { onRegmarkAttempt: (n, of, mm) => attempts.push([n, of, mm]) });
     expect(attempts).toEqual([
       [1, 4, 0],
-      [2, 4, 3],
-      [3, 4, 5],
+      [2, 4, 2],
+      [3, 4, 4],
     ]);
-    expect(searchTops(t.log)).toEqual([0, 60, 100]); // 0, 3, 5 mm in SU
+    expect(searchTops(t.log)).toEqual([60, 100, 140]); // 3 mm base offset, then +2, +4 mm, in SU
     expect(t.log).toContain("M600,600"); // then cuts
   });
 
@@ -195,7 +203,7 @@ describe("mark search retries", () => {
     const t = new FakeTransport(cameo3Responder({ regmarkReply: NOT_FOUND }));
     const session = await CutterSession.open(t, cameo3);
     await expect(session.run(job(true))).rejects.toThrow(RegmarkNotFoundError);
-    expect(searchTops(t.log)).toEqual([0, 60, 100, 140]);
+    expect(searchTops(t.log)).toEqual([60, 100, 140, 180]);
     expect(t.log.some((c) => c.startsWith("M600"))).toBe(false);
     expect(session.isBusy).toBe(false);
   });
@@ -207,14 +215,14 @@ describe("mark search retries", () => {
     const run = session.run(job(true));
     await vi.advanceTimersByTimeAsync(41_000);
     await run;
-    expect(searchTops(t.log)).toEqual([0, 60]);
+    expect(searchTops(t.log)).toEqual([60, 100]);
   });
 
   it("uses the model's retry positions", async () => {
     const t = new FakeTransport(cameo3Responder({ regmarkReply: NOT_FOUND }));
-    const session = await CutterSession.open(t, { ...cameo3, regmarkSearchStepsMm: [0, 2] });
+    const session = await CutterSession.open(t, { ...cameo3, regmarkScanOffsetMm: 0, regmarkSearchStepsMm: [0, 1] });
     await expect(session.run(job(true))).rejects.toThrow(RegmarkNotFoundError);
-    expect(searchTops(t.log)).toEqual([0, 40]);
+    expect(searchTops(t.log)).toEqual([0, 20]);
   });
 });
 
@@ -293,7 +301,7 @@ describe("manual registration", () => {
   it("registers from where the user jogged the blade", async () => {
     const cutter = cameo3Responder();
     const t = new FakeTransport((w) => (/TB23,[^\x03]*\x03$/.test(w) ? FOUND : cutter(w)));
-    const session = await CutterSession.open(t, cameo3);
+    const session = await CutterSession.open(t, { ...cameo3, regmarkScanOffsetMm: 0 });
     const phases: CutPhase[] = [];
     await session.run(
       { ...job(true), registration: "manual" },
@@ -349,7 +357,7 @@ describe("abort, log and diagnostics", () => {
     const session = await CutterSession.open(t, cameo3);
     await session.run(job(true));
     const text = session.log.format();
-    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width; scan offset 0 mm; home none/);
+    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width; scan offset 3 mm; home none/);
     expect(text).toMatch(/<- CAMEO V1\.10 {4}\|/);
     expect(text).toMatch(/## job: cut, 1 paths; sheet bbox \(40\.00, 40\.00\)-\(50\.00, 50\.00\) mm; frame offset \(-10, -10\) mm; marks standard auto/);
     expect(text).toMatch(/## mat loaded since a reset with it out/);

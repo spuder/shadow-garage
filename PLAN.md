@@ -566,3 +566,12 @@ and 2 and aborts a job on anything else. The prompt now has a **The mat is out â
 (`CutterSession.confirmMatOut`), so a wrong or unknown status can't trap the user. The raw status
 replies during that wait are in the log. Once the user's log shows the real code, it goes into
 `parseStatus` so both the prompt and the idle mat watch recognise it automatically.
+
+**Print-and-cut working on hardware.** With reset-with-the-mat-out and scan retries, the Cameo 3
+found the marks on the second attempt (3 mm further down) and cut the calibration target "almost
+perfectly". The half-size cut is gone, so it came from the same wrong position reference and not
+from the `TB123` argument order: the default `height_width` is confirmed. The failed first attempt
+left an error on the cutter's own display, so the Cameo 3 now starts its scan 3 mm lower
+(`regmarkScanOffsetMm: 3`) and retries in 2 mm steps (`[0, 2, 4, 6]`). The golden test compares
+against upstream with a zero offset. Still open: the Cameo 3's real "mat out" status code (needs a
+log), and tuning the sticker-paper blade settings.
