@@ -52,15 +52,22 @@ export class FakeTransport implements Transport {
 }
 
 export interface Cameo3Script {
-  /** Status replies (without ETX), consumed in order; the last one repeats. Default: always "0" (ready). */
+  /**
+   * Status replies (without ETX), consumed in order; the last one repeats. Default: the mat is out
+   * when the app connects ("2", read by the connect-time check), then loaded ("0") from then on.
+   */
   statuses?: string[];
-  /** Reply to the registration-mark search (ETX included), or null to never answer. Default: found. */
-  regmarkReply?: string | null;
+  /**
+   * Reply to the registration-mark search (ETX included), or null to never answer. Default: found.
+   * An array gives one reply per search, in order; the last one repeats.
+   */
+  regmarkReply?: string | null | (string | null)[];
 }
 
 /** A scripted Cameo 3 that answers the init queries, status polls and mark search. */
-export function cameo3Responder({ statuses = ["0"], regmarkReply = "    0\x03" }: Cameo3Script = {}): Responder {
+export function cameo3Responder({ statuses = ["2", "0"], regmarkReply = "    0\x03" }: Cameo3Script = {}): Responder {
   const queue = [...statuses];
+  const searches = Array.isArray(regmarkReply) ? [...regmarkReply] : [regmarkReply];
   const replies: Record<string, string> = {
     "FG\x03": "CAMEO V1.10    \x03",
     "TB71\x03": "    0,    0\x03",
@@ -70,7 +77,7 @@ export function cameo3Responder({ statuses = ["0"], regmarkReply = "    0\x03" }
   return (written) => {
     if (written === "\x1b\x05") return (queue.length > 1 ? queue.shift()! : queue[0]) + "\x03";
     if (written in replies) return replies[written];
-    if (/TB12[34],[^\x03]*\x03$/.test(written)) return regmarkReply;
+    if (/TB12[34],[^\x03]*\x03$/.test(written)) return searches.length > 1 ? searches.shift()! : searches[0];
     return null;
   };
 }

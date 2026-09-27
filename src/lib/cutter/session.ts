@@ -5,11 +5,11 @@ import type { Contour } from "../geometry";
 import { GraphtecProtocol } from "./graphtec";
 import type { CutMaterial } from "./materials";
 import type { CutterModel } from "./models";
-import { CutterNotReadyError, type CutFrame, type CutterProtocol, type RegmarkSpec } from "./protocol";
+import { CutterNotReadyError, RegmarkNotFoundError, type CutFrame, type CutterProtocol, type RegmarkSpec } from "./protocol";
 import { boundingBox } from "../geometry";
 import { LoggingTransport, type Transport } from "./transport";
 
-export type CutPhase = "waiting" | "loadMat" | "reloadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
+export type CutPhase = "waiting" | "loadMat" | "unloadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
 
 export interface CutJob {
   paths: Contour[]; // sheet millimetres
@@ -32,6 +32,8 @@ export interface ManualJog {
 export interface JobEvents {
   onPhase?: (phase: CutPhase) => void;
   onProgress?: (fraction: number) => void;
+  /** Called before each automatic mark-search attempt (1-based), with how much further down it starts. */
+  onRegmarkAttempt?: (attempt: number, of: number, extraOffsetMm: number) => void;
   /** Called during manual registration; resolve once the tool is over the mark, reject to cancel. */
   onManualRegistration?: (jog: ManualJog) => Promise<void>;
 }
@@ -90,12 +92,15 @@ export class CutterSession {
   private readonly protocol: CutterProtocol;
   private busy = false;
   /**
-   * True once the app has moved the mat since it was last loaded. The cutter only measures where
-   * the paper really is when the mat is loaded; the per-job reset takes wherever the mat currently
-   * sits as the top. After a job (which parks at the mark origin, or stops mid-scan if it fails),
-   * a registered job therefore needs a fresh load first, or its mark search starts too far down.
+   * True when the last reset happened with the mat out, and the mat hasn't been moved since.
+   *
+   * On a real Cameo 3 the reset (ESC EOT) is needed to fix the carriage's side-to-side reference
+   * (without it, the AutoBlade depth taps drifted off their holes from job to job), but a reset
+   * with the mat already loaded re-zeroes the paper axis wherever the mat sits, so the mark
+   * search starts too high on the sheet. Resetting while the mat is out, then loading, gets both
+   * right — the scan worked when the only reset was the one on connect, before loading.
    */
-  private matMoved = false;
+  private resetWithMatOut = false;
 
   private constructor(model: CutterModel, transport: Transport, log: LoggingTransport, protocol: CutterProtocol, firmware: string) {
     this.model = model;
@@ -108,12 +113,15 @@ export class CutterSession {
   /** Handshakes with the cutter on an already-open transport; closes the transport if that fails. */
   static async open(transport: Transport, model: CutterModel): Promise<CutterSession> {
     const log = new LoggingTransport(transport);
-    log.note(`connect: ${model.manufacturer} ${model.name} via ${transport.label}; mark search args ${model.regmarkArgOrder}; home ${model.homeCommand ?? "none"}`);
+    log.note(`connect: ${model.manufacturer} ${model.name} via ${transport.label}; mark search args ${model.regmarkArgOrder}; scan offset ${model.regmarkScanOffsetMm} mm; home ${model.homeCommand ?? "none"}`);
     const protocol = protocolFor(model, log);
     try {
       const { firmware } = await protocol.initialize();
       log.note(`firmware: ${firmware}`);
-      return new CutterSession(model, transport, log, protocol, firmware);
+      const session = new CutterSession(model, transport, log, protocol, firmware);
+      session.resetWithMatOut = (await protocol.status()) === "unloaded";
+      log.note(session.resetWithMatOut ? "mat out at connect: the next load is ready for print-and-cut" : "mat loaded at connect");
+      return session;
     } catch (e) {
       log.note(`initialization failed: ${(e as Error).message}`);
       await log.close();
@@ -135,26 +143,35 @@ export class CutterSession {
     this.noteJob(job);
     let touched = false;
     try {
-      if (job.regmarks && this.matMoved) {
-        events.onPhase?.("reloadMat");
-        this.log.note("waiting for the mat to be unloaded and loaded again");
-        await this.waitForFreshLoad(signal);
-        this.matMoved = false;
-        this.log.note("mat reloaded");
-      }
       events.onPhase?.("waiting");
-      await this.protocol.waitForReady({
-        timeoutMs: 120_000,
-        pollMs: 1000,
-        signal,
-        onStatus: (s) => events.onPhase?.(s === "unloaded" ? "loadMat" : "waiting"),
-      });
-      // Re-initialize at the start of every job, like each inkscape-silhouette run does. On a real
-      // Cameo 3, the first job after connecting tapped the AutoBlade into its adjust holes correctly,
-      // but later jobs in the same connection drifted right; each one inherited position state
-      // from the previous job (e.g. the registration-mark origin).
+      if (job.regmarks) {
+        // Print-and-cut: reset with the mat out, then load (see resetWithMatOut).
+        const status = await this.protocol.status();
+        if (status === "ready" && this.resetWithMatOut) {
+          this.log.note("mat loaded since a reset with it out");
+        } else {
+          if (status !== "unloaded") {
+            events.onPhase?.("unloadMat");
+            await this.waitForStatus("unloaded", signal);
+          }
+          touched = true;
+          await this.protocol.initialize();
+          this.log.note("reset with the mat out; waiting for it to be loaded");
+          events.onPhase?.("loadMat");
+          await this.waitForStatus("ready", signal);
+        }
+      } else {
+        // Cut-only: the side-to-side reset is what matters, so reset once the mat is in.
+        await this.protocol.waitForReady({
+          timeoutMs: 120_000,
+          pollMs: 1000,
+          signal,
+          onStatus: (s) => events.onPhase?.(s === "unloaded" ? "loadMat" : "waiting"),
+        });
+        touched = true;
+        await this.protocol.initialize();
+      }
       touched = true;
-      await this.protocol.initialize();
       if (this.model.homeCommand) {
         events.onPhase?.("homing");
         await this.protocol.home();
@@ -165,13 +182,15 @@ export class CutterSession {
         if (!events.onManualRegistration) throw new Error("Manual registration needs a UI to position the tool");
         events.onPhase?.("manualRegmarks");
         await this.protocol.prepareManualRegmarks(job.regmarks);
-        await events.onManualRegistration(new JogController(this.protocol, this.model, job.regmarks.originXmm, job.regmarks.originYmm));
+        await events.onManualRegistration(
+          new JogController(this.protocol, this.model, job.regmarks.originXmm, job.regmarks.originYmm + this.model.regmarkScanOffsetMm)
+        );
         signal?.throwIfAborted();
         events.onPhase?.("regmarks");
         await this.protocol.confirmManualRegmarks(job.regmarks);
       } else if (job.regmarks) {
         events.onPhase?.("regmarks");
-        await this.protocol.searchRegmarks(job.regmarks);
+        await this.searchWithRetries(job.regmarks, events, signal);
       }
       events.onPhase?.("cutting");
       await this.protocol.cut(job.paths, job.frame, { onProgress: events.onProgress, signal });
@@ -190,25 +209,41 @@ export class CutterSession {
       }
       throw e;
     } finally {
-      if (touched) this.matMoved = true;
+      if (touched) this.resetWithMatOut = false;
       this.busy = false;
     }
   }
 
-  /** Polls until the cutter has reported the mat unloaded and then loaded again (up to 5 minutes). */
-  private async waitForFreshLoad(signal?: AbortSignal): Promise<void> {
+  /** The mark search is one-shot; retry it further down the sheet (model.regmarkSearchStepsMm). */
+  private async searchWithRetries(spec: RegmarkSpec, events: JobEvents, signal?: AbortSignal): Promise<void> {
+    const steps = this.model.regmarkSearchStepsMm.length > 0 ? this.model.regmarkSearchStepsMm : [0];
+    for (let i = 0; i < steps.length; i++) {
+      signal?.throwIfAborted();
+      events.onRegmarkAttempt?.(i + 1, steps.length, steps[i]);
+      this.log.note(`mark search ${i + 1}/${steps.length}, starting ${steps[i]} mm further down`);
+      try {
+        await this.protocol.searchRegmarks(spec, steps[i]);
+        return;
+      } catch (e) {
+        if (!(e instanceof RegmarkNotFoundError) || i === steps.length - 1) throw e;
+        this.log.note(`mark search ${i + 1} failed: ${e.message}`);
+      }
+    }
+  }
+
+  /** Polls (1 s) until the cutter reports the mat unloaded or loaded, for up to 5 minutes. */
+  private async waitForStatus(target: "unloaded" | "ready", signal?: AbortSignal): Promise<void> {
     const deadline = Date.now() + 300_000;
-    let sawUnloaded = false;
     for (;;) {
       signal?.throwIfAborted();
-      const status = await this.protocol.status();
-      if (status === "unloaded") sawUnloaded = true;
-      else if (status === "ready" && sawUnloaded) return;
+      if ((await this.protocol.status()) === target) return;
       if (Date.now() >= deadline) break;
       await sleep(1000, signal);
     }
     throw new CutterNotReadyError(
-      "The mat wasn't reloaded. Each print-and-cut job needs a fresh load: unload the mat, put the next sheet on it, load it again, then send."
+      target === "unloaded"
+        ? "The mat wasn't unloaded. Print-and-cut resets the cutter with the mat out: unload it, then load the sheet when asked."
+        : "No mat was loaded. Load the mat with the printed sheet and send again."
     );
   }
 
@@ -220,7 +255,7 @@ export class CutterSession {
     try {
       await this.protocol.home();
     } finally {
-      this.matMoved = true;
+      this.resetWithMatOut = false;
       this.busy = false;
     }
   }
@@ -232,7 +267,7 @@ export class CutterSession {
     try {
       return await this.protocol.sendRaw(lines, listenMs);
     } finally {
-      this.matMoved = true; // raw commands can move anything
+      this.resetWithMatOut = false; // raw commands can move anything
       this.busy = false;
     }
   }

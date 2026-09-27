@@ -531,3 +531,22 @@ mark. `CutterSession` now tracks `matMoved`. It's set once a job starts sending 
 Home and raw commands. A job with registration marks then first waits (up to 5 min) for the
 cutter's status to go unloaded (`2`) and then ready (`0`), before its reset. Cut-only test cuts
 are exempt. This matches the real workflow: new printed sheet, new load.
+
+**Reset with the mat out, and retry the scan.** Requiring a reload didn't help: the scan still
+started near the paper's top edge. Timeline of the hardware tests:
+- First test: the only reset was on connect, likely before loading. The marks were found.
+- Per-job reset after load: the scan went wrong.
+- Reload, then reset after load: still wrong.
+
+So on the Cameo 3 a reset with the mat **in** re-zeroes the paper axis at the mat's loaded
+position, which is higher than where the scan needs to start. inkscape-silhouette resets after load
+too; this may be what its issue #82 describes. The reset is still needed for the carriage (X)
+reference, as the tap drift showed. Print-and-cut jobs now do: unload (if the mat is in) → reset →
+load → setup → scan. `resetWithMatOut` is armed by the connect-time status check (mat out when
+connecting) and disarmed by any job, Home or raw command. Test cuts keep reset-after-load, since
+only X matters there. The golden test is back to comparing connect + job against one upstream run.
+
+`TB123` is one-shot, so `searchWithRetries` re-sends it with its start moved down the sheet by
+`model.regmarkSearchStepsMm` (Cameo 3: 0, 3, 5, 7 mm). The retries apply only to "not found" and
+the 40 s timeout. There are two new tuning switches: `?scanOffset=` (base start offset) and
+`?scanSteps=`.

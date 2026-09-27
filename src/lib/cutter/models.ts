@@ -37,6 +37,16 @@ export interface CutterModel {
    * On a real Cameo 3, TT had no visible effect, so it's off until a working command is found.
    */
   homeCommand: HomeCommand;
+  /**
+   * Extra distance (mm) down the sheet at which the mark search starts, on top of upstream's
+   * "10 mm before the top-left mark". For tuning if the cutter scans too near the paper's top edge.
+   */
+  regmarkScanOffsetMm: number;
+  /**
+   * The mark search (TB123) is one-shot. If it fails, it's retried starting this much further down
+   * the sheet (mm, relative to the first attempt), one attempt per entry.
+   */
+  regmarkSearchStepsMm: number[];
   pressureRange: [number, number];
   speedRange: [number, number];
   toolHolders: number;
@@ -58,6 +68,8 @@ export const CUTTER_MODELS: CutterModel[] = [
     regmarks: "standard",
     regmarkArgOrder: "height_width",
     homeCommand: null,
+    regmarkScanOffsetMm: 0,
+    regmarkSearchStepsMm: [0, 3, 5, 7],
     pressureRange: [1, 33],
     speedRange: [1, 10],
     toolHolders: 2,

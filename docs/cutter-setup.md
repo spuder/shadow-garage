@@ -44,11 +44,14 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
    - the marks must print **solid matte black**.
 4. Click **Connect**, then **Send to Cutter**. The cutter scans for the marks first; if it can't
    find them, nothing is cut.
-5. **Every print-and-cut job needs a freshly loaded mat.** The cutter only measures where the
-   paper really is when the mat is loaded, and a finished or failed job leaves the mat part-way in.
-   So from the second job on, the app shows "Unload the mat and load it again…" and waits until
-   the cutter reports the mat out and back in. That's also the normal flow: new sheet, new load.
-   Test cuts don't need it.
+5. **Print-and-cut resets the cutter with the mat out.** The reset keeps the blade's side-to-side
+   position right, but doing it with the mat loaded makes the scan start too high on the sheet.
+   So each print-and-cut job asks you to unload the mat (if it's in), resets, then asks you to
+   load it. Tip: click **Send to Cutter** or **Calibration cut** *before* loading the sheet, and
+   you'll only be asked once. Connecting with the mat out counts too, so the first job after
+   connecting goes straight ahead. Test cuts don't need any of this.
+6. The mark scan is one-shot on the cutter, so if it misses, the app retries starting 3, 5 and
+   7 mm further down the sheet before giving up.
 
 **Test cut** cuts a 10 mm square near the top-left corner without looking for marks — use a scrap
 sheet to check the blade settings before cutting a printed sheet.
@@ -71,7 +74,7 @@ been confirmed on a Cameo 3 yet; if it doesn't work, please send the log.
 4. Click **Copy log** and send the measurements together with the log. The log records every
    command sent to the cutter and every reply, including the registration step.
 
-### Diagnostic switch
+### Diagnostic switches
 
 Graphtec.py sends the mark distances in the search command height first; a Silhouette Studio
 trace suggests width first. To try the other order, open the app with `?regmarkArgs=width_height`
@@ -80,7 +83,8 @@ calibration cut again. `?regmarkArgs=height_width` (the default) switches back.
 
 Homing is off by default: `TT` (from Silhouette Studio's startup sequence) did nothing on a real
 Cameo 3. `?homeCmd=H` tries GPGL's generic Home before every job and shows a **Home** button.
-Switches can be combined: `?regmarkArgs=width_height&homeCmd=H`. The log's first line shows which
+`?scanOffset=5` starts every mark scan 5 mm further down the sheet, and `?scanSteps=0,2,4,6`
+changes the retry positions. Switches can be combined: `?regmarkArgs=width_height&scanOffset=5`. The log's first line shows which
 settings were used.
 
 ### Diagnostics console

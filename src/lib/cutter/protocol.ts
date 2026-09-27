@@ -47,8 +47,11 @@ export interface CutterProtocol {
   home(): Promise<void>;
   waitForReady(opts: WaitOptions): Promise<void>;
   setup(material: CutMaterial): Promise<void>;
-  /** Has the cutter optically find the printed marks; afterwards device (0,0) is the top-left mark. */
-  searchRegmarks(spec: RegmarkSpec): Promise<void>;
+  /**
+   * Has the cutter optically find the printed marks, starting extraOffsetMm further down the sheet
+   * than usual; afterwards device (0,0) is the top-left mark. One attempt; throws RegmarkNotFoundError.
+   */
+  searchRegmarks(spec: RegmarkSpec, extraOffsetMm?: number): Promise<void>;
   /** Manual registration, step 1: configure marks and move the tool to where the top-left mark should be. */
   prepareManualRegmarks(spec: RegmarkSpec): Promise<void>;
   /** Tool-up move in media millimetres (before registration). */

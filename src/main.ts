@@ -911,7 +911,7 @@ downloadPdfBtn.addEventListener("click", async () => {
 const CUT_PHASE_TEXT: Record<CutPhase, string> = {
   waiting: "Checking the cutter…",
   loadMat: "Load the mat into the cutter…",
-  reloadMat: "Unload the mat and load it again (with the next sheet)…",
+  unloadMat: "Unload the mat — the cutter resets with it out, then asks you to load it…",
   homing: "Homing the cutter…",
   setup: "Setting up the blade…",
   manualRegmarks: "Manual registration — position the blade",
@@ -995,11 +995,17 @@ async function disconnectCutter() {
  * ?regmarkArgs=width_height|height_width swaps the order of the mark distances in the mark search;
  * ?homeCmd=TT|H|none picks the command that homes the carriage before a job.
  */
+// ?scanOffset=<mm> starts the mark search further down the sheet (regmarkScanOffsetMm);
+// ?scanSteps=0,3,5,7 sets the retry positions (regmarkSearchStepsMm).
 function withDiagnosticOverrides(model: CutterModel): CutterModel {
   const params = new URLSearchParams(location.search);
   const out = { ...model };
   const order = params.get("regmarkArgs");
   if (order === "width_height" || order === "height_width") out.regmarkArgOrder = order;
+  const scanOffset = Number(params.get("scanOffset"));
+  if (params.has("scanOffset") && Number.isFinite(scanOffset)) out.regmarkScanOffsetMm = scanOffset;
+  const steps = params.get("scanSteps")?.split(",").map(Number);
+  if (steps && steps.length > 0 && steps.every(Number.isFinite)) out.regmarkSearchStepsMm = steps;
   const home = params.get("homeCmd");
   if (home === "TT" || home === "H") out.homeCommand = home;
   else if (home === "none") out.homeCommand = null;
@@ -1068,6 +1074,10 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
           renderCutter();
         },
         onManualRegistration: waitForManualRegistration,
+        onRegmarkAttempt: (n, of, offset) => {
+          c.statusText = n === 1 ? CUT_PHASE_TEXT.regmarks : `Finding registration marks (try ${n} of ${of}, ${offset} mm further down)…`;
+          renderCutter();
+        },
       },
       controller.signal
     );
