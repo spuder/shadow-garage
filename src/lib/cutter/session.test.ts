@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SHEET_SIZES } from "../sheet";
 import { cameo3Responder, FakeTransport } from "./fakeTransport";
 import { layoutJob, testSquarePaths } from "./job";
-import { WHITE_STICKER_PAPER } from "./materials";
+import { STICKER_PAPER } from "./materials";
 import { modelById } from "./models";
 import { RegmarkNotFoundError } from "./protocol";
 import { CutterSession, type CutJob, type CutPhase } from "./session";
@@ -14,7 +14,7 @@ const FOUND = "    0\x03";
 
 function job(regmarks: boolean): CutJob {
   const layout = layoutJob(letter, cameo3, regmarks ? "standard" : false);
-  return { paths: testSquarePaths(40, 40, 10, 0), ...layout, material: WHITE_STICKER_PAPER };
+  return { paths: testSquarePaths(40, 40, 10, 0), ...layout, material: STICKER_PAPER };
 }
 
 /** Top-of-search positions (SU) of every mark search sent. */

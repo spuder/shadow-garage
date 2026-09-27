@@ -691,3 +691,12 @@ registration keep-outs, README, GitHub Pages). Integration fixes:
   cut after registration (between the marks, 10 mm in), and every print-and-cut job would fail
   with "outside the cutter's allowed area".
 - The dev URL moved to `/shadow-garage/` (Vite `base`).
+
+**Paper types choose cut settings.** Each `PaperType` now carries its `cutMaterial`, and jobs use
+the selected type's instead of a hard-coded preset. The types are shown in two groups, "Adhesive
+sticker sheets" (names now end in "sticker") and "Plain paper (no adhesive)". There's a new
+**20 lb printer paper** type: `PRINTER_PAPER_20LB` with pressure 10, speed 5, AutoBlade 2. It's
+based on inkscape-silhouette's "Print Paper Light Weight" (media 132, pressure 5), with pressure
+raised and the blade deeper so it cuts through rather than scoring, and speed lowered because
+speed 10 / pressure 20 tore plain paper on the Cameo 3. All sticker types share `STICKER_PAPER`
+(renamed from `WHITE_STICKER_PAPER`). The Cutter panel shows the active settings.

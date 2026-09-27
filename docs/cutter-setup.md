@@ -5,7 +5,16 @@ Studio needed. It uses WebUSB, so it needs **Chrome or Edge on desktop** (Firefo
 implement WebUSB). The page must be served over HTTPS or from `localhost`. Locally, `npm run dev -- --port 5183` serves it at
 `http://localhost:5183/shadow-garage/` (the path matches the GitHub Pages deployment).
 
-Only white sticker paper with the AutoBlade is supported for now.
+The AutoBlade is the only supported blade for now. The **Paper Type** you pick also picks the cut
+settings (shown in the Cutter panel):
+
+| Paper type | Cut | Pressure | Speed | Blade |
+|---|---|---|---|---|
+| Adhesive sticker sheets (white, clear, holographic, matte black, glossy silver) | kiss cut, backing left intact | 20 | 10 | 1 |
+| 20 lb printer paper (no adhesive) | cut all the way through | 10 | 5 | 2 |
+
+All of these are starting values, not yet tuned on hardware. Run **Test cut** on a scrap of the
+same stock first.
 
 ## macOS
 

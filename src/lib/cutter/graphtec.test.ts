@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SHEET_SIZES } from "../sheet";
 import { chunkFrames, frameCommands, homeCommands, manualRegmarkCommand, mmToSU, moveCommand, parseStatus, pathCommands, regmarkCommands, setupCommands } from "./graphtec";
 import { layoutJob, testSquarePaths } from "./job";
-import { WHITE_STICKER_PAPER } from "./materials";
+import { STICKER_PAPER } from "./materials";
 import { modelById } from "./models";
 import { CutOutOfBoundsError, type CutFrame } from "./protocol";
 
@@ -39,7 +39,7 @@ describe("command framing", () => {
 
 describe("Cameo 3 command sequences", () => {
   it("sets up the 12x12 mat, AutoBlade in holder 1 and the sticker-paper preset", () => {
-    expect(setupCommands(cameo3, WHITE_STICKER_PAPER)).toEqual([
+    expect(setupCommands(cameo3, STICKER_PAPER)).toEqual([
       "TG1",
       "FN0",
       "TB50,0",
@@ -58,7 +58,7 @@ describe("Cameo 3 command sequences", () => {
   });
 
   it("clamps material values to the model's ranges", () => {
-    const cmds = setupCommands(cameo3, { ...WHITE_STICKER_PAPER, pressure: 99, speed: 0, autoBladeDepth: 42 });
+    const cmds = setupCommands(cameo3, { ...STICKER_PAPER, pressure: 99, speed: 0, autoBladeDepth: 42 });
     expect(cmds).toContain("FX33,1");
     expect(cmds).toContain("!1,1");
     expect(cmds).toContain("TF10,1");
@@ -103,5 +103,18 @@ describe("Cameo 3 command sequences", () => {
     expect(parseStatus("    1")).toBe("moving");
     expect(parseStatus("2")).toBe("unloaded");
     expect(parseStatus("???")).toBe("unknown");
+  });
+});
+
+describe("paper types", () => {
+  it("each points at a cut material, and printer paper cuts through slower and deeper", async () => {
+    const { PAPER_TYPES } = await import("../paperTypes");
+    const { CUT_MATERIALS, PRINTER_PAPER_20LB, STICKER_PAPER: sticker } = await import("./materials");
+    for (const pt of PAPER_TYPES) expect(CUT_MATERIALS).toContain(pt.cutMaterial);
+    const printer = PAPER_TYPES.find((p) => p.id === "printer-paper-20lb")!;
+    expect(printer.adhesive).toBe(false);
+    expect(PAPER_TYPES.filter((p) => p.adhesive).every((p) => /sticker/i.test(p.name))).toBe(true);
+    expect(setupCommands(cameo3, PRINTER_PAPER_20LB)).toEqual(expect.arrayContaining(["!5,1", "FX10,1", "TF2,1"]));
+    expect(PRINTER_PAPER_20LB.autoBladeDepth).toBeGreaterThan(sticker.autoBladeDepth);
   });
 });

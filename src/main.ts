@@ -11,7 +11,6 @@ import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
 import { buildCalibrationSVG, calibrationPaths } from "./lib/cutter/calibration";
 import { buildCutPaths, CutJobError, layoutJob, testSquarePaths } from "./lib/cutter/job";
-import { WHITE_STICKER_PAPER } from "./lib/cutter/materials";
 import type { CutterModel } from "./lib/cutter/models";
 import { RegmarkNotFoundError } from "./lib/cutter/protocol";
 import { CutterSession, type CutJob, type CutPhase, type ManualJog } from "./lib/cutter/session";
@@ -155,6 +154,7 @@ const rawSendBtn = document.getElementById("rawSendBtn") as HTMLButtonElement;
 const rawReplyEl = document.getElementById("rawReply") as HTMLPreElement;
 const CUTTER_DEBUG = new URLSearchParams(location.search).has("debug");
 const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
+const cutterMaterialEl = document.getElementById("cutterMaterial") as HTMLDivElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
 const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
@@ -178,7 +178,22 @@ SHEET_SIZES.forEach((s, i) => {
   sheetSelect.appendChild(opt);
 });
 
-PAPER_TYPES.forEach((pt) => {
+// Grouped so it's obvious which stocks are adhesive sticker sheets and which are plain paper.
+const PAPER_GROUPS = [
+  { title: "Adhesive sticker sheets", adhesive: true },
+  { title: "Plain paper (no adhesive)", adhesive: false },
+];
+for (const group of PAPER_GROUPS) {
+  const types = PAPER_TYPES.filter((pt) => pt.adhesive === group.adhesive);
+  if (types.length === 0) continue;
+  const title = document.createElement("div");
+  title.className = "paper-group-title";
+  title.textContent = group.title;
+  paperTypeGrid.appendChild(title);
+  types.forEach(addPaperSwatch);
+}
+
+function addPaperSwatch(pt: (typeof PAPER_TYPES)[number]) {
   const btn = document.createElement("button");
   btn.className = "paper-swatch" + (pt.id === state.paperTypeId ? " active" : "");
   btn.dataset.paperId = pt.id;
@@ -189,7 +204,7 @@ PAPER_TYPES.forEach((pt) => {
     recompute();
   });
   paperTypeGrid.appendChild(btn);
-});
+}
 
 // ---- helpers ----
 function uid(): string {
@@ -947,6 +962,9 @@ function renderCutter() {
   else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}`;
   else cutterStatusEl.textContent = "Not connected";
 
+  const m = currentPaperType().cutMaterial;
+  cutterMaterialEl.textContent = `Cut settings: ${m.name} — pressure ${m.pressure}, speed ${m.speed}, blade ${m.autoBladeDepth} (set by Paper Type)`;
+
   cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
   cutterConnectBtn.disabled = !supported || c.connecting || running;
   cutterTestBtn.disabled = !c.session || running;
@@ -1029,17 +1047,18 @@ function withDiagnosticOverrides(model: CutterModel): CutterModel {
  * (no marks), or the calibration target (always with marks — it's for checking print-and-cut).
  */
 function buildCutJob(session: CutterSession, kind: CutKind): CutJob {
+  const material = currentPaperType().cutMaterial; // cut settings follow the selected paper type
   const sheet = currentSheet();
   if (kind === "test") {
-    return { label: "test square", paths: testSquarePaths(), ...layoutJob(sheet, session.model, false), material: WHITE_STICKER_PAPER };
+    return { label: "test square", paths: testSquarePaths(), ...layoutJob(sheet, session.model, false), material };
   }
   if (kind === "calibration") {
-    return { label: "calibration", paths: calibrationPaths(sheet), ...layoutJob(sheet, session.model, state.regmarkStyle), material: WHITE_STICKER_PAPER };
+    return { label: "calibration", paths: calibrationPaths(sheet), ...layoutJob(sheet, session.model, state.regmarkStyle), material };
   }
   const layout = layoutJob(sheet, session.model, currentRegmarkStyle());
   const { items } = computeSheetItems(sheet);
   if (items.length === 0) throw new CutJobError("Nothing fits on the sheet to cut.");
-  return { label: "sheet", paths: buildCutPaths(items), ...layout, material: WHITE_STICKER_PAPER };
+  return { label: "sheet", paths: buildCutPaths(items), ...layout, material };
 }
 
 /** Shows the jog pad and waits until the user registers (resolve) or cancels (reject). */
