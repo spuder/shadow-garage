@@ -44,12 +44,11 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
    - the marks must print **solid matte black**.
 4. Click **Connect**, then **Send to Cutter**. The cutter scans for the marks first; if it can't
    find them, nothing is cut.
-5. **Print-and-cut resets the cutter with the mat out.** The reset keeps the blade's side-to-side
-   position right, but doing it with the mat loaded makes the scan start too high on the sheet.
-   So each print-and-cut job asks you to unload the mat (if it's in), resets, then asks you to
-   load it. Tip: click **Send to Cutter** or **Calibration cut** *before* loading the sheet, and
-   you'll only be asked once. Connecting with the mat out counts too, so the first job after
-   connecting goes straight ahead. Test cuts don't need any of this.
+5. Between sheets, just take the finished mat out, put the next sheet on, load it and send. The
+   cutter needs a reset with the mat **out** (resetting with it loaded makes the scan start too
+   high on the sheet), and the app does that automatically the moment you take the mat out. The
+   status line shows "mat in" / "mat out". If you connect with the mat already loaded, the first
+   print-and-cut job asks you to take it out and load it again, once.
 6. The mark scan is one-shot on the cutter, so if it misses, the app retries starting 3, 5 and
    7 mm further down the sheet before giving up.
 

@@ -122,6 +122,7 @@ export class LoggingTransport implements Transport {
   private readonly head: LogEntry[] = [];
   private tail: LogEntry[] = [];
   private omitted = 0;
+  private quiet = 0;
 
   constructor(inner: Transport) {
     this.inner = inner;
@@ -132,6 +133,7 @@ export class LoggingTransport implements Transport {
   }
 
   private add(kind: LogEntry["kind"], text: string) {
+    if (this.quiet > 0 && kind !== "note") return;
     const entry = { t: Date.now() - this.start, kind, text };
     if (this.head.length < LoggingTransport.HEAD) {
       this.head.push(entry);
@@ -141,6 +143,16 @@ export class LoggingTransport implements Transport {
     if (this.tail.length > LoggingTransport.TAIL) {
       this.tail = this.tail.slice(-LoggingTransport.TAIL);
       this.omitted++;
+    }
+  }
+
+  /** Runs fn without logging its traffic (notes still go in) — for routine background status polls. */
+  async quietly<T>(fn: () => Promise<T>): Promise<T> {
+    this.quiet++;
+    try {
+      return await fn();
+    } finally {
+      this.quiet--;
     }
   }
 

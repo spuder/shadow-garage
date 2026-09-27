@@ -36,6 +36,7 @@ interface CutterUiState {
   jog: { jog: ManualJog; resolve: () => void; reject: (e: Error) => void } | null; // manual registration in progress
   jogStepMm: 1 | 5;
   busyOp: boolean; // Home button or raw diagnostics command in progress
+  mat: "ready" | "unloaded" | null; // mat state from the session's idle watch
 }
 
 interface StickerDesign {
@@ -92,7 +93,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
-  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, busyOp: false },
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, busyOp: false, mat: null },
 };
 
 applyTheme(state.theme);
@@ -911,7 +912,7 @@ downloadPdfBtn.addEventListener("click", async () => {
 const CUT_PHASE_TEXT: Record<CutPhase, string> = {
   waiting: "Checking the cutter…",
   loadMat: "Load the mat into the cutter…",
-  unloadMat: "Unload the mat — the cutter resets with it out, then asks you to load it…",
+  unloadMat: "Take the mat out — the cutter resets with it out, then load it again…",
   homing: "Homing the cutter…",
   setup: "Setting up the blade…",
   manualRegmarks: "Manual registration — position the blade",
@@ -933,7 +934,10 @@ function renderCutter() {
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
   else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
   else if (c.statusText) cutterStatusEl.textContent = c.statusText;
-  else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}`;
+  else if (c.session) {
+    const mat = c.mat === "unloaded" ? " · mat out" : c.mat === "ready" ? " · mat in" : "";
+    cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}${mat}`;
+  }
   else cutterStatusEl.textContent = "Not connected";
 
   cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
@@ -972,6 +976,14 @@ async function connectCutter() {
     if (conn) {
       c.session = await CutterSession.open(conn.transport, withDiagnosticOverrides(conn.model));
       c.log = c.session.log;
+      c.mat = null;
+      // Resets the cutter whenever the mat is taken out, so the next sheet can just be loaded and sent.
+      c.session.onMatChange = (status) => {
+        c.mat = status === "unloaded" || status === "ready" ? status : c.mat;
+        if (status === "unloaded" && c.statusText?.startsWith("Done")) c.statusText = null;
+        renderCutter();
+      };
+      c.session.startMatWatch();
       c.manualRetryKind = null;
     }
   } catch (e) {

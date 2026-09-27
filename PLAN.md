@@ -550,3 +550,12 @@ only X matters there. The golden test is back to comparing connect + job against
 `model.regmarkSearchStepsMm` (Cameo 3: 0, 3, 5, 7 mm). The retries apply only to "not found" and
 the 40 s timeout. There are two new tuning switches: `?scanOffset=` (base start offset) and
 `?scanSteps=`.
+
+**Idle mat watch.** The previous version made the user click Send before loading, which was
+backwards. `CutterSession.startMatWatch()` now polls the status every 1.5 s while idle. The polls
+are quiet (`LoggingTransport.quietly`) and in/out changes are logged as notes. The moment the mat
+comes out, it resets the cutter (arming `resetWithMatOut`). So the normal flow works: unload the
+finished sheet, load the next, send, with no prompts. Jobs, Home and raw commands wait for an
+in-flight poll to finish before starting (`acquire`). The in-job unload → reset → load prompts
+remain only as the fallback for connecting with the mat already in. The status line shows the
+mat state.

@@ -5,7 +5,7 @@ import type { Contour } from "../geometry";
 import { GraphtecProtocol } from "./graphtec";
 import type { CutMaterial } from "./materials";
 import type { CutterModel } from "./models";
-import { CutterNotReadyError, RegmarkNotFoundError, type CutFrame, type CutterProtocol, type RegmarkSpec } from "./protocol";
+import { CutterNotReadyError, RegmarkNotFoundError, type CutFrame, type CutterProtocol, type CutterStatus, type RegmarkSpec } from "./protocol";
 import { boundingBox } from "../geometry";
 import { LoggingTransport, type Transport } from "./transport";
 
@@ -101,6 +101,11 @@ export class CutterSession {
    * right — the scan worked when the only reset was the one on connect, before loading.
    */
   private resetWithMatOut = false;
+  private watchTimer: ReturnType<typeof setInterval> | null = null;
+  private watchTick: Promise<void> | null = null;
+  private lastMatStatus: CutterStatus | null = null;
+  /** Called when the idle mat watch sees the mat go in or out (see startMatWatch). */
+  onMatChange: ((status: CutterStatus) => void) | null = null;
 
   private constructor(model: CutterModel, transport: Transport, log: LoggingTransport, protocol: CutterProtocol, firmware: string) {
     this.model = model;
@@ -137,9 +142,45 @@ export class CutterSession {
     return this.busy;
   }
 
-  async run(job: CutJob, events: JobEvents = {}, signal?: AbortSignal): Promise<void> {
-    if (this.busy) throw new Error("The cutter is already running a job");
+  /**
+   * While idle, polls the mat status (quietly, not logged) and resets the cutter as soon as the mat
+   * is taken out, so the next print-and-cut sheet can simply be loaded and sent (see resetWithMatOut).
+   */
+  startMatWatch(intervalMs = 1500) {
+    if (this.watchTimer) return;
+    this.watchTimer = setInterval(() => this.tickMatWatch(), intervalMs);
+  }
+
+  private tickMatWatch() {
+    if (this.busy || this.watchTick) return;
+    this.watchTick = (async () => {
+      const status = await this.log.quietly(() => this.protocol.status());
+      if (status !== this.lastMatStatus) {
+        this.lastMatStatus = status;
+        if (status === "unloaded" || status === "ready") this.log.note(`mat ${status === "unloaded" ? "out" : "in"}`);
+        this.onMatChange?.(status);
+      }
+      if (status === "unloaded" && !this.resetWithMatOut) {
+        await this.protocol.initialize();
+        this.resetWithMatOut = true;
+        this.log.note("reset with the mat out: the next sheet can be loaded and sent");
+      }
+    })()
+      .catch((e) => this.log.note(`mat check failed: ${(e as Error).message}`))
+      .finally(() => {
+        this.watchTick = null;
+      });
+  }
+
+  /** Marks the session busy, after letting any in-flight background mat check finish. */
+  private async acquire(what: string): Promise<void> {
+    if (this.busy) throw new Error(what);
     this.busy = true;
+    if (this.watchTick) await this.watchTick;
+  }
+
+  async run(job: CutJob, events: JobEvents = {}, signal?: AbortSignal): Promise<void> {
+    await this.acquire("The cutter is already running a job");
     this.noteJob(job);
     let touched = false;
     try {
@@ -249,8 +290,7 @@ export class CutterSession {
 
   /** Homes the carriage on its own (the panel's Home button). */
   async home(): Promise<void> {
-    if (this.busy) throw new Error("The cutter is busy");
-    this.busy = true;
+    await this.acquire("The cutter is busy");
     this.log.note("home");
     try {
       await this.protocol.home();
@@ -262,8 +302,7 @@ export class CutterSession {
 
   /** Diagnostics console: raw commands in, printable replies out (both also go to the log). */
   async sendRaw(lines: string[], listenMs?: number): Promise<string> {
-    if (this.busy) throw new Error("The cutter is busy");
-    this.busy = true;
+    await this.acquire("The cutter is busy");
     try {
       return await this.protocol.sendRaw(lines, listenMs);
     } finally {
@@ -288,6 +327,8 @@ export class CutterSession {
   }
 
   async close(): Promise<void> {
+    if (this.watchTimer) clearInterval(this.watchTimer);
+    this.watchTimer = null;
     await this.log.close();
   }
 }

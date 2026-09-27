@@ -351,3 +351,52 @@ describe("abort, log and diagnostics", () => {
     expect(t.log).toEqual(["TG0", "<ESC ENQ>", "TF1,1", "FG"]);
   });
 });
+
+describe("idle mat watch", () => {
+  it("resets as soon as the mat comes out, so the next loaded sheet goes straight to scanning", async () => {
+    vi.useFakeTimers();
+    // connect: mat in (not ready for print-and-cut); idle: in, out, out, in; then the job
+    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "0", "2", "2", "0"] }));
+    const session = await CutterSession.open(t, cameo3);
+    const changes: string[] = [];
+    session.onMatChange = (s) => changes.push(s);
+    session.startMatWatch(1000);
+    await vi.advanceTimersByTimeAsync(4500);
+    expect(changes).toEqual(["ready", "unloaded", "ready"]);
+    expect(t.log.filter((c) => c === "<ESC EOT>")).toHaveLength(2); // connect + one reset when the mat came out
+    t.writes.length = 0;
+    const phases: CutPhase[] = [];
+    await session.run(job(true), { onPhase: (p) => phases.push(p) });
+    expect(phases).not.toContain("unloadMat");
+    expect(phases).not.toContain("loadMat");
+    expect(t.log.filter((c) => c === "<ESC EOT>")).toHaveLength(0);
+    await session.close();
+  });
+
+  it("resets only once per time the mat is out, and doesn't log the routine polls", async () => {
+    vi.useFakeTimers();
+    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "2"] }));
+    const session = await CutterSession.open(t, cameo3);
+    session.startMatWatch(1000);
+    await vi.advanceTimersByTimeAsync(10_500);
+    expect(t.log.filter((c) => c === "<ESC EOT>")).toHaveLength(2); // connect + one
+    const text = session.log.format();
+    expect(text).toMatch(/## mat out/);
+    expect(text).toMatch(/## reset with the mat out/);
+    expect(text.match(/-> <ESC ENQ>/g)!.length).toBeLessThanOrEqual(1); // only the connect-time check
+    await session.close();
+  });
+
+  it("stays out of the way of a job, and stops when the session closes", async () => {
+    vi.useFakeTimers();
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    session.startMatWatch(1000);
+    await vi.advanceTimersByTimeAsync(1000); // a tick is in flight or just finished
+    await session.run(job(false)); // must not collide with the watch's reads
+    await session.close();
+    const before = t.writes.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(t.writes.length).toBe(before);
+  });
+});
