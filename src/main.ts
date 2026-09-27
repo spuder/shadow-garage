@@ -36,8 +36,6 @@ interface CutterUiState {
   jog: { jog: ManualJog; resolve: () => void; reject: (e: Error) => void } | null; // manual registration in progress
   jogStepMm: 1 | 5;
   busyOp: boolean; // Home button or raw diagnostics command in progress
-  mat: "ready" | "unloaded" | null; // mat state from the session's idle watch
-  phase: CutPhase | null; // current phase of the running job
 }
 
 interface StickerDesign {
@@ -94,7 +92,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
-  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, busyOp: false, mat: null, phase: null },
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, busyOp: false },
 };
 
 applyTheme(state.theme);
@@ -152,7 +150,6 @@ const rawSendBtn = document.getElementById("rawSendBtn") as HTMLButtonElement;
 const rawReplyEl = document.getElementById("rawReply") as HTMLPreElement;
 const CUTTER_DEBUG = new URLSearchParams(location.search).has("debug");
 const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
-const matOutBtn = document.getElementById("matOutBtn") as HTMLButtonElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
 const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
@@ -914,7 +911,6 @@ downloadPdfBtn.addEventListener("click", async () => {
 const CUT_PHASE_TEXT: Record<CutPhase, string> = {
   waiting: "Checking the cutter…",
   loadMat: "Load the mat into the cutter…",
-  unloadMat: "Take the mat out — the cutter resets with it out, then load it again…",
   homing: "Homing the cutter…",
   setup: "Setting up the blade…",
   manualRegmarks: "Manual registration — position the blade",
@@ -936,10 +932,7 @@ function renderCutter() {
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
   else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
   else if (c.statusText) cutterStatusEl.textContent = c.statusText;
-  else if (c.session) {
-    const mat = c.mat === "unloaded" ? " · mat out" : c.mat === "ready" ? " · mat in" : "";
-    cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}${mat}`;
-  }
+  else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}`;
   else cutterStatusEl.textContent = "Not connected";
 
   cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
@@ -952,7 +945,6 @@ function renderCutter() {
   calCutBtn.disabled = !c.session || running;
   copyLogBtn.disabled = !c.log;
   manualRegBtn.hidden = !c.manualRetryKind || !c.session || running;
-  matOutBtn.hidden = c.phase !== "unloadMat";
 
   jogPad.hidden = !c.jog;
   if (c.jog) {
@@ -979,14 +971,6 @@ async function connectCutter() {
     if (conn) {
       c.session = await CutterSession.open(conn.transport, withDiagnosticOverrides(conn.model));
       c.log = c.session.log;
-      c.mat = null;
-      // Resets the cutter whenever the mat is taken out, so the next sheet can just be loaded and sent.
-      c.session.onMatChange = (status) => {
-        c.mat = status === "unloaded" || status === "ready" ? status : c.mat;
-        if (status === "unloaded" && c.statusText?.startsWith("Done")) c.statusText = null;
-        renderCutter();
-      };
-      c.session.startMatWatch();
       c.manualRetryKind = null;
     }
   } catch (e) {
@@ -1080,7 +1064,6 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
       {
         onPhase: (p) => {
           phase = p;
-          c.phase = p;
           c.statusText = CUT_PHASE_TEXT[p];
           renderCutter();
         },
@@ -1104,7 +1087,6 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
   } finally {
     c.job = null;
     c.jog = null;
-    c.phase = null;
     renderCutter();
   }
 }
@@ -1122,10 +1104,6 @@ cutterConnectBtn.addEventListener("click", () => {
 
 cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
 
-matOutBtn.addEventListener("click", () => {
-  state.cutter.session?.confirmMatOut();
-  matOutBtn.hidden = true;
-});
 
 rawSendBtn.addEventListener("click", async () => {
   const c = state.cutter;

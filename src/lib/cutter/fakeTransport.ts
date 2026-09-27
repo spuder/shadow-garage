@@ -52,10 +52,7 @@ export class FakeTransport implements Transport {
 }
 
 export interface Cameo3Script {
-  /**
-   * Status replies (without ETX), consumed in order; the last one repeats. Default: the mat is out
-   * when the app connects ("2", read by the connect-time check), then loaded ("0") from then on.
-   */
+  /** Status replies (without ETX), consumed in order; the last one repeats. Default: always "0" (ready). */
   statuses?: string[];
   /**
    * Reply to the registration-mark search (ETX included), or null to never answer. Default: found.
@@ -65,7 +62,7 @@ export interface Cameo3Script {
 }
 
 /** A scripted Cameo 3 that answers the init queries, status polls and mark search. */
-export function cameo3Responder({ statuses = ["2", "0"], regmarkReply = "    0\x03" }: Cameo3Script = {}): Responder {
+export function cameo3Responder({ statuses = ["0"], regmarkReply = "    0\x03" }: Cameo3Script = {}): Responder {
   const queue = [...statuses];
   const searches = Array.isArray(regmarkReply) ? [...regmarkReply] : [regmarkReply];
   const replies: Record<string, string> = {

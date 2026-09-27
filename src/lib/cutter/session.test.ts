@@ -4,7 +4,7 @@ import { cameo3Responder, FakeTransport } from "./fakeTransport";
 import { layoutJob, testSquarePaths } from "./job";
 import { WHITE_STICKER_PAPER } from "./materials";
 import { modelById } from "./models";
-import { CutterNotReadyError, RegmarkNotFoundError } from "./protocol";
+import { RegmarkNotFoundError } from "./protocol";
 import { CutterSession, type CutJob, type CutPhase } from "./session";
 
 const cameo3 = modelById("silhouette-cameo3")!;
@@ -24,16 +24,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// Unless a test says otherwise, the scripted cutter has the mat out when the app connects
-// (status 2) and loaded from then on (status 0): connect, load the printed sheet, send.
-
 describe("connecting", () => {
-  it("resets, reads the firmware and calibration, and checks whether the mat is in", async () => {
+  it("resets and reads the firmware and calibration", async () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);
     expect(session.firmware).toBe("CAMEO V1.10");
-    expect(t.log).toEqual(["<ESC EOT>", "FG", "TB71", "FA", "TC", "<ESC ENQ>"]);
-    expect(session.log.format()).toMatch(/## mat out at connect/);
+    expect(t.log).toEqual(["<ESC EOT>", "FG", "TB71", "FA", "TC"]);
   });
 
   it("closes the transport if the cutter doesn't answer", async () => {
@@ -47,13 +43,13 @@ describe("connecting", () => {
 });
 
 describe("print-and-cut job", () => {
-  it("sends exactly what inkscape-silhouette sends: the connect reset (mat out) serves the job", async () => {
+  it("sends exactly what one inkscape-silhouette run sends", async () => {
     // Transcript from fablabnbg/inkscape-silhouette's Graphtec.py in dry-run mode
     // (force_hardware='Silhouette_Cameo3', inc_queries=True): setup(media=134, toolholder=1,
     // cuttingmat='cameo_12x12', autoblade=True, depth=1), then plot() of a 10mm square at sheet
     // (40,40) with regmark=True, regsearch=True, regwidth=195.9, reglength=259.4,
     // regorigin=(10,10), endposition='start'. Status polls (ESC ENQ) are omitted from both sides.
-    // Same commands; the one difference is timing: we reset with the mat out, upstream after load.
+    // Compared with upstream's scan start; the Cameo 3 default starts 3 mm lower (tuned on hardware).
     const upstream = [
       "<ESC EOT>", "FG", "TB71", "FA", "TC",
       "TG1", "FN0", "TB50,0", "\\0,0", "Z6096,6096", "J1", "!10,1", "FX20,1", "FE0,1",
@@ -62,111 +58,38 @@ describe("print-and-cut job", () => {
       "M600,600", "D600,800", "D800,800", "D800,600", "D600,600",
       "L0", "\\0,0", "M0,0", "J0", "FN0", "TB50,0",
     ];
-    // Compared with upstream's scan start; the Cameo 3 default starts 3 mm lower (tuned on hardware).
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, { ...cameo3, regmarkScanOffsetMm: 0 });
+    t.writes.length = 0; // each job re-initializes, so a job alone is one full upstream run
     await session.run(job(true));
     expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
   });
 
-  it("runs setup, mark search, cut and park in order, reporting phases and progress", async () => {
+  it("checks the mat, resets with it loaded, then sets up, scans, cuts and parks", async () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);
+    t.writes.length = 0;
     const phases: CutPhase[] = [];
     const progress: number[] = [];
     await session.run(job(true), { onPhase: (p) => phases.push(p), onProgress: (f) => progress.push(f) });
-    expect(phases).toEqual(["waiting", "setup", "regmarks", "cutting", "finishing", "done"]);
+    expect(phases).toEqual(["waiting", "waiting", "setup", "regmarks", "cutting", "finishing", "done"]);
     expect(progress.at(-1)).toBe(1);
     const log = t.log;
+    expect(log.slice(0, 7)).toEqual(["<ESC ENQ>", "<ESC EOT>", "FG", "TB71", "FA", "TC", "TG1"]);
     // square at sheet (40,40) lands at mark-relative (30,30) = 600 SU
     expect(log.slice(log.indexOf("M600,600"), log.indexOf("M600,600") + 5)).toEqual(["M600,600", "D600,800", "D800,800", "D800,600", "D600,600"]);
     expect(log.slice(-6)).toEqual(["L0", "\\0,0", "M0,0", "J0", "FN0", "TB50,0"]);
   });
 
-  it("with the mat already in, asks for it out, resets, then asks for it back in", async () => {
-    // connect: loaded; job: loaded -> still loaded -> out -> (reset) -> out -> loaded
-    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "0", "0", "2", "2", "0"] }));
+  it("re-initializes at the start of every job", async () => {
+    const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);
-    t.writes.length = 0;
-    vi.useFakeTimers();
-    const phases: CutPhase[] = [];
-    const run = session.run(job(true), { onPhase: (p) => phases.push(p) });
-    await vi.advanceTimersByTimeAsync(10_000);
-    await run;
-    expect(phases.slice(0, 4)).toEqual(["waiting", "unloadMat", "loadMat", "setup"]);
-    // the reset happens while the mat is out: after the first "2", before the final "0"
-    expect(t.log.slice(0, 11)).toEqual(["<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>", "<ESC EOT>", "FG", "TB71", "FA", "TC", "<ESC ENQ>", "<ESC ENQ>", "TG1"]);
-  });
-
-  it("needs the unload/reset/load again for the next job", async () => {
-    // connect: out; job 1: loaded (+1 poll after its cut); job 2: loaded -> out -> (reset) -> loaded
-    const t = new FakeTransport(cameo3Responder({ statuses: ["2", "0", "0", "0", "2", "0"] }));
-    const session = await CutterSession.open(t, cameo3);
-    vi.useFakeTimers();
     await session.run(job(true));
-    t.writes.length = 0;
-    const phases: CutPhase[] = [];
-    const run = session.run(job(true), { onPhase: (p) => phases.push(p) });
-    await vi.advanceTimersByTimeAsync(10_000);
-    await run;
-    expect(phases.slice(0, 3)).toEqual(["waiting", "unloadMat", "loadMat"]);
-    expect(t.log.filter((c) => c === "<ESC EOT>")).toHaveLength(1);
-  });
-
-  it("skips the unload prompt when the mat is already out, and just resets and waits for it", async () => {
-    // connect: out; job 1 uses the connect reset; the user unloads before job 2
-    const t = new FakeTransport(cameo3Responder({ statuses: ["2", "0", "0", "2", "0"] }));
-    const session = await CutterSession.open(t, cameo3);
-    vi.useFakeTimers();
     await session.run(job(true));
-    const phases: CutPhase[] = [];
-    const run = session.run(job(true), { onPhase: (p) => phases.push(p) });
-    await vi.advanceTimersByTimeAsync(10_000);
-    await run;
-    expect(phases.slice(0, 3)).toEqual(["waiting", "loadMat", "setup"]);
-  });
-
-  it("lets the user confirm the mat is out when the cutter's status never says so", async () => {
-    // a cutter that reports "3" with the mat out: the wait would never end on its own
-    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "0", "3", "3", "3", "3", "3", "3", "0"] }));
-    const session = await CutterSession.open(t, cameo3);
-    vi.useFakeTimers();
-    const phases: CutPhase[] = [];
-    const run = session.run(job(true), { onPhase: (p) => phases.push(p) });
-    await vi.advanceTimersByTimeAsync(2500);
-    expect(phases.at(-1)).toBe("unloadMat");
-    session.confirmMatOut();
-    await vi.advanceTimersByTimeAsync(5000);
-    await run;
-    expect(phases).toEqual(expect.arrayContaining(["unloadMat", "loadMat", "regmarks", "done"]));
-    const text = session.log.format();
-    expect(text).toMatch(/<- 3\|/); // the raw code is in the log for diagnosis
-    expect(text).toMatch(/## mat out, confirmed by the user \(cutter reported "unknown"\)[\s\S]*-> <ESC EOT>/);
-  });
-
-  it("gives up if the mat is never taken out, without resetting", async () => {
-    const t = new FakeTransport(cameo3Responder({ statuses: ["0"] }));
-    const session = await CutterSession.open(t, cameo3);
-    t.writes.length = 0;
-    vi.useFakeTimers();
-    const run = expect(session.run(job(true))).rejects.toThrow(CutterNotReadyError);
-    await vi.advanceTimersByTimeAsync(301_000);
-    await run;
-    expect(t.log.every((c) => c === "<ESC ENQ>")).toBe(true);
-    expect(session.isBusy).toBe(false);
-  });
-
-  it("can be cancelled while waiting for the mat", async () => {
-    const t = new FakeTransport(cameo3Responder({ statuses: ["0"] }));
-    const session = await CutterSession.open(t, cameo3);
-    vi.useFakeTimers();
-    const controller = new AbortController();
-    const run = expect(session.run(job(true), {}, controller.signal)).rejects.toThrow();
-    await vi.advanceTimersByTimeAsync(3000);
-    controller.abort();
-    await vi.advanceTimersByTimeAsync(2000);
-    await run;
-    expect(session.isBusy).toBe(false);
+    const log = t.log.filter((c) => c !== "<ESC ENQ>");
+    const inits = log.flatMap((c, i) => (c === "<ESC EOT>" ? [i] : []));
+    expect(inits).toHaveLength(3); // connect + two jobs
+    expect(log.slice(inits[2] - 1, inits[2] + 6)).toEqual(["TB50,0", "<ESC EOT>", "FG", "TB71", "FA", "TC", "TG1"]);
   });
 
   it("starts the Cameo 3's scan 3 mm lower than upstream by default", async () => {
@@ -227,7 +150,7 @@ describe("mark search retries", () => {
 });
 
 describe("cut-only job (test cut)", () => {
-  it("waits for the mat, resets with it in, and skips the mark search", async () => {
+  it("resets with the mat in and skips the mark search", async () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);
     t.writes.length = 0;
@@ -239,7 +162,7 @@ describe("cut-only job (test cut)", () => {
 
   it("asks for the mat while the cutter reports it out", async () => {
     vi.useFakeTimers();
-    const t = new FakeTransport(cameo3Responder({ statuses: ["2", "2", "2", "0"] }));
+    const t = new FakeTransport(cameo3Responder({ statuses: ["2", "2", "0"] }));
     const session = await CutterSession.open(t, cameo3);
     const phases: CutPhase[] = [];
     const run = session.run(job(false), { onPhase: (p) => phases.push(p) });
@@ -248,32 +171,19 @@ describe("cut-only job (test cut)", () => {
     expect(phases.slice(0, 3)).toEqual(["waiting", "loadMat", "loadMat"]);
     expect(phases.at(-1)).toBe("done");
   });
-
-  it("means the next print-and-cut job needs the unload/reset/load", async () => {
-    // connect: out; test cut: loaded (+1 poll); job: loaded -> out -> loaded
-    const t = new FakeTransport(cameo3Responder({ statuses: ["2", "0", "0", "0", "2", "0"] }));
-    const session = await CutterSession.open(t, cameo3);
-    vi.useFakeTimers();
-    await session.run(job(false));
-    const phases: CutPhase[] = [];
-    const run = session.run(job(true), { onPhase: (p) => phases.push(p) });
-    await vi.advanceTimersByTimeAsync(10_000);
-    await run;
-    expect(phases).toContain("unloadMat");
-  });
 });
 
 describe("homing", () => {
-  it("homes after the mat is ready and before setup, waiting until it stops", async () => {
-    // connect: out; job: loaded; homing: moving, moving, stopped
-    const t = new FakeTransport(cameo3Responder({ statuses: ["2", "0", "1", "1", "0"] }));
+  it("homes after the reset and before setup, waiting until it stops", async () => {
+    // mat check: ready; homing: moving, moving, stopped
+    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "1", "1", "0"] }));
     const session = await CutterSession.open(t, { ...cameo3, homeCommand: "TT" });
     t.writes.length = 0;
     vi.useFakeTimers();
     const run = session.run(job(true));
     await vi.advanceTimersByTimeAsync(2000);
     await run;
-    expect(t.log.slice(0, 6)).toEqual(["<ESC ENQ>", "TT", "<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>", "TG1"]);
+    expect(t.log.slice(0, 11)).toEqual(["<ESC ENQ>", "<ESC EOT>", "FG", "TB71", "FA", "TC", "TT", "<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>", "TG1"]);
   });
 
   it("sends the model's home command, or none", async () => {
@@ -360,7 +270,6 @@ describe("abort, log and diagnostics", () => {
     expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width; scan offset 3 mm; home none/);
     expect(text).toMatch(/<- CAMEO V1\.10 {4}\|/);
     expect(text).toMatch(/## job: cut, 1 paths; sheet bbox \(40\.00, 40\.00\)-\(50\.00, 50\.00\) mm; frame offset \(-10, -10\) mm; marks standard auto/);
-    expect(text).toMatch(/## mat loaded since a reset with it out/);
     expect(text).toMatch(/## mark search 1\/4, starting 0 mm further down/);
     expect(text).toMatch(/<- {5}0\|/); // "<- " then the reply "    0"
     expect(text).toMatch(/## job done/);
@@ -375,54 +284,5 @@ describe("abort, log and diagnostics", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(await raw).toBe("0|CAMEO V1.10    |");
     expect(t.log).toEqual(["TG0", "<ESC ENQ>", "TF1,1", "FG"]);
-  });
-});
-
-describe("idle mat watch", () => {
-  it("resets as soon as the mat comes out, so the next loaded sheet goes straight to scanning", async () => {
-    vi.useFakeTimers();
-    // connect: mat in (not ready for print-and-cut); idle: in, out, out, in; then the job
-    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "0", "2", "2", "0"] }));
-    const session = await CutterSession.open(t, cameo3);
-    const changes: string[] = [];
-    session.onMatChange = (s) => changes.push(s);
-    session.startMatWatch(1000);
-    await vi.advanceTimersByTimeAsync(4500);
-    expect(changes).toEqual(["ready", "unloaded", "ready"]);
-    expect(t.log.filter((c) => c === "<ESC EOT>")).toHaveLength(2); // connect + one reset when the mat came out
-    t.writes.length = 0;
-    const phases: CutPhase[] = [];
-    await session.run(job(true), { onPhase: (p) => phases.push(p) });
-    expect(phases).not.toContain("unloadMat");
-    expect(phases).not.toContain("loadMat");
-    expect(t.log.filter((c) => c === "<ESC EOT>")).toHaveLength(0);
-    await session.close();
-  });
-
-  it("resets only once per time the mat is out, and doesn't log the routine polls", async () => {
-    vi.useFakeTimers();
-    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "2"] }));
-    const session = await CutterSession.open(t, cameo3);
-    session.startMatWatch(1000);
-    await vi.advanceTimersByTimeAsync(10_500);
-    expect(t.log.filter((c) => c === "<ESC EOT>")).toHaveLength(2); // connect + one
-    const text = session.log.format();
-    expect(text).toMatch(/## mat out/);
-    expect(text).toMatch(/## reset with the mat out/);
-    expect(text.match(/-> <ESC ENQ>/g)!.length).toBeLessThanOrEqual(1); // only the connect-time check
-    await session.close();
-  });
-
-  it("stays out of the way of a job, and stops when the session closes", async () => {
-    vi.useFakeTimers();
-    const t = new FakeTransport(cameo3Responder());
-    const session = await CutterSession.open(t, cameo3);
-    session.startMatWatch(1000);
-    await vi.advanceTimersByTimeAsync(1000); // a tick is in flight or just finished
-    await session.run(job(false)); // must not collide with the watch's reads
-    await session.close();
-    const before = t.writes.length;
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(t.writes.length).toBe(before);
   });
 });

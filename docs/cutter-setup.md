@@ -42,19 +42,15 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
    - put the sheet in the **top-left corner of the mat grid**, square to the grid lines;
    - push the mat against the **left guide** as it loads;
    - the marks must print **solid matte black**.
-4. Click **Connect**, then **Send to Cutter**. The cutter scans for the marks first; if it can't
-   find them, nothing is cut.
-5. Between sheets, just take the finished mat out, put the next sheet on, load it and send. The
-   cutter needs a reset with the mat **out** (resetting with it loaded makes the scan start too
-   high on the sheet), and the app does that automatically the moment you take the mat out. The
-   status line shows "mat in" / "mat out". If you connect with the mat already loaded, the first
-   print-and-cut job asks you to take it out and load it again, once. If that prompt doesn't
-   notice the mat is out, press **The mat is out — continue** (and send the log: it shows the
-   status code your cutter reports).
-6. The mark scan is one-shot on the cutter. On the Cameo 3 it starts 3 mm lower than
+4. **Load the mat first, then** click **Connect** and **Send to Cutter**. The Cameo 3 reports
+   "ready" even with no mat loaded, so the app can't check for you. Never send with the mat out:
+   the cutter will set up and scan anyway, and the scan can run the carriage into the side.
+5. Every job resets the cutter (with the mat loaded), sets the blade, scans for the marks, then
+   cuts. The scan is one-shot on the cutter. On the Cameo 3 it starts 3 mm lower than
    inkscape-silhouette's default (tuned on hardware), and if it misses, the app retries 2, 4 and
    6 mm further down before giving up. A miss leaves an error on the cutter's own screen even if a
    retry then succeeds; that's cosmetic.
+6. Between sheets: unload, put the next printed sheet on the mat, load, send.
 
 **Test cut** cuts a 10 mm square near the top-left corner without looking for marks — use a scrap
 sheet to check the blade settings before cutting a printed sheet.
@@ -104,10 +100,8 @@ taps still drift, send the log from two back-to-back test cuts.
 
 ## Current limitations
 
-- **Mat detection:** the Cameo 3 doesn't seem to report the mat being out with the status code the
-  app expects, so the "take the mat out" prompt needs **The mat is out — continue**, and the
-  automatic reset when the mat comes out doesn't trigger yet. A log from a session where you take
-  the mat out will show the real code.
+- **No mat detection:** the Cameo 3 (firmware V1.40) answers "ready" whether or not a mat is
+  loaded, so loading the mat before sending is up to you.
 - The sticker-paper pressure, speed and blade depth (`src/lib/cutter/materials.ts`) are
   inkscape-silhouette's defaults and still need tuning for a clean kiss cut.
 - Letter and A4 sheets only — A3 doesn't fit on the 12×12 mat.

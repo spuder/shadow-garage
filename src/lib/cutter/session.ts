@@ -5,11 +5,11 @@ import type { Contour } from "../geometry";
 import { GraphtecProtocol } from "./graphtec";
 import type { CutMaterial } from "./materials";
 import type { CutterModel } from "./models";
-import { CutterNotReadyError, RegmarkNotFoundError, type CutFrame, type CutterProtocol, type CutterStatus, type RegmarkSpec } from "./protocol";
+import { RegmarkNotFoundError, type CutFrame, type CutterProtocol, type RegmarkSpec } from "./protocol";
 import { boundingBox } from "../geometry";
 import { LoggingTransport, type Transport } from "./transport";
 
-export type CutPhase = "waiting" | "loadMat" | "unloadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
+export type CutPhase = "waiting" | "loadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
 
 export interface CutJob {
   paths: Contour[]; // sheet millimetres
@@ -62,20 +62,6 @@ class JogController implements ManualJog {
   }
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true }
-    );
-  });
-}
-
 function protocolFor(model: CutterModel, transport: Transport): CutterProtocol {
   switch (model.protocol) {
     case "graphtec-gpgl":
@@ -91,22 +77,6 @@ export class CutterSession {
   readonly log: LoggingTransport;
   private readonly protocol: CutterProtocol;
   private busy = false;
-  /**
-   * True when the last reset happened with the mat out, and the mat hasn't been moved since.
-   *
-   * On a real Cameo 3 the reset (ESC EOT) is needed to fix the carriage's side-to-side reference
-   * (without it, the AutoBlade depth taps drifted off their holes from job to job), but a reset
-   * with the mat already loaded re-zeroes the paper axis wherever the mat sits, so the mark
-   * search starts too high on the sheet. Resetting while the mat is out, then loading, gets both
-   * right — the scan worked when the only reset was the one on connect, before loading.
-   */
-  private resetWithMatOut = false;
-  private watchTimer: ReturnType<typeof setInterval> | null = null;
-  private watchTick: Promise<void> | null = null;
-  private lastMatStatus: CutterStatus | null = null;
-  private matOutConfirmed = false;
-  /** Called when the idle mat watch sees the mat go in or out (see startMatWatch). */
-  onMatChange: ((status: CutterStatus) => void) | null = null;
 
   private constructor(model: CutterModel, transport: Transport, log: LoggingTransport, protocol: CutterProtocol, firmware: string) {
     this.model = model;
@@ -124,10 +94,7 @@ export class CutterSession {
     try {
       const { firmware } = await protocol.initialize();
       log.note(`firmware: ${firmware}`);
-      const session = new CutterSession(model, transport, log, protocol, firmware);
-      session.resetWithMatOut = (await protocol.status()) === "unloaded";
-      log.note(session.resetWithMatOut ? "mat out at connect: the next load is ready for print-and-cut" : "mat loaded at connect");
-      return session;
+      return new CutterSession(model, transport, log, protocol, firmware);
     } catch (e) {
       log.note(`initialization failed: ${(e as Error).message}`);
       await log.close();
@@ -143,77 +110,24 @@ export class CutterSession {
     return this.busy;
   }
 
-  /**
-   * While idle, polls the mat status (quietly, not logged) and resets the cutter as soon as the mat
-   * is taken out, so the next print-and-cut sheet can simply be loaded and sent (see resetWithMatOut).
-   */
-  startMatWatch(intervalMs = 1500) {
-    if (this.watchTimer) return;
-    this.watchTimer = setInterval(() => this.tickMatWatch(), intervalMs);
-  }
-
-  private tickMatWatch() {
-    if (this.busy || this.watchTick) return;
-    this.watchTick = (async () => {
-      const status = await this.log.quietly(() => this.protocol.status());
-      if (status !== this.lastMatStatus) {
-        this.lastMatStatus = status;
-        if (status === "unloaded" || status === "ready") this.log.note(`mat ${status === "unloaded" ? "out" : "in"}`);
-        this.onMatChange?.(status);
-      }
-      if (status === "unloaded" && !this.resetWithMatOut) {
-        await this.protocol.initialize();
-        this.resetWithMatOut = true;
-        this.log.note("reset with the mat out: the next sheet can be loaded and sent");
-      }
-    })()
-      .catch((e) => this.log.note(`mat check failed: ${(e as Error).message}`))
-      .finally(() => {
-        this.watchTick = null;
-      });
-  }
-
-  /** Marks the session busy, after letting any in-flight background mat check finish. */
-  private async acquire(what: string): Promise<void> {
-    if (this.busy) throw new Error(what);
-    this.busy = true;
-    if (this.watchTick) await this.watchTick;
-  }
-
   async run(job: CutJob, events: JobEvents = {}, signal?: AbortSignal): Promise<void> {
-    await this.acquire("The cutter is already running a job");
+    if (this.busy) throw new Error("The cutter is already running a job");
+    this.busy = true;
     this.noteJob(job);
-    let touched = false;
     try {
       events.onPhase?.("waiting");
-      if (job.regmarks) {
-        // Print-and-cut: reset with the mat out, then load (see resetWithMatOut).
-        const status = await this.protocol.status();
-        if (status === "ready" && this.resetWithMatOut) {
-          this.log.note("mat loaded since a reset with it out");
-        } else {
-          if (status !== "unloaded") {
-            events.onPhase?.("unloadMat");
-            await this.waitForStatus("unloaded", signal);
-          }
-          touched = true;
-          await this.protocol.initialize();
-          this.log.note("reset with the mat out; waiting for it to be loaded");
-          events.onPhase?.("loadMat");
-          await this.waitForStatus("ready", signal);
-        }
-      } else {
-        // Cut-only: the side-to-side reset is what matters, so reset once the mat is in.
-        await this.protocol.waitForReady({
-          timeoutMs: 120_000,
-          pollMs: 1000,
-          signal,
-          onStatus: (s) => events.onPhase?.(s === "unloaded" ? "loadMat" : "waiting"),
-        });
-        touched = true;
-        await this.protocol.initialize();
-      }
-      touched = true;
+      // Note: a Cameo 3 (firmware V1.40) reports "ready" even with no mat loaded, so this can't be
+      // relied on to catch a missing mat. The user must load the mat before sending.
+      await this.protocol.waitForReady({
+        timeoutMs: 120_000,
+        pollMs: 1000,
+        signal,
+        onStatus: (s) => events.onPhase?.(s === "unloaded" ? "loadMat" : "waiting"),
+      });
+      // Reset at the start of every job, with the mat loaded, like each inkscape-silhouette run.
+      // Without it the Cameo 3's AutoBlade depth taps drifted off their holes from job to job.
+      // (Resetting with the mat *out* and then loading was tried and is unsafe: see PLAN.md §11a.)
+      await this.protocol.initialize();
       if (this.model.homeCommand) {
         events.onPhase?.("homing");
         await this.protocol.home();
@@ -251,7 +165,6 @@ export class CutterSession {
       }
       throw e;
     } finally {
-      if (touched) this.resetWithMatOut = false;
       this.busy = false;
     }
   }
@@ -273,54 +186,25 @@ export class CutterSession {
     }
   }
 
-  /** Polls (1 s) until the cutter reports the mat unloaded or loaded, for up to 5 minutes. */
-  private async waitForStatus(target: "unloaded" | "ready", signal?: AbortSignal): Promise<void> {
-    const deadline = Date.now() + 300_000;
-    if (target === "unloaded") this.matOutConfirmed = false;
-    for (;;) {
-      signal?.throwIfAborted();
-      const status = await this.protocol.status();
-      if (status === target) return;
-      if (target === "unloaded" && this.matOutConfirmed) {
-        // The status codes come from upstream (0 ready, 1 moving, 2 unloaded); a model that
-        // reports the mat being out differently would otherwise never get past this wait.
-        this.log.note(`mat out, confirmed by the user (cutter reported "${status}")`);
-        return;
-      }
-      if (Date.now() >= deadline) break;
-      await sleep(1000, signal);
-    }
-    throw new CutterNotReadyError(
-      target === "unloaded"
-        ? "The mat wasn't unloaded. Print-and-cut resets the cutter with the mat out: unload it, then load the sheet when asked."
-        : "No mat was loaded. Load the mat with the printed sheet and send again."
-    );
-  }
-
-  /** The user says the mat is out: ends a "take the mat out" wait even if the cutter's status disagrees. */
-  confirmMatOut() {
-    this.matOutConfirmed = true;
-  }
-
   /** Homes the carriage on its own (the panel's Home button). */
   async home(): Promise<void> {
-    await this.acquire("The cutter is busy");
+    if (this.busy) throw new Error("The cutter is busy");
+    this.busy = true;
     this.log.note("home");
     try {
       await this.protocol.home();
     } finally {
-      this.resetWithMatOut = false;
       this.busy = false;
     }
   }
 
   /** Diagnostics console: raw commands in, printable replies out (both also go to the log). */
   async sendRaw(lines: string[], listenMs?: number): Promise<string> {
-    await this.acquire("The cutter is busy");
+    if (this.busy) throw new Error("The cutter is busy");
+    this.busy = true;
     try {
       return await this.protocol.sendRaw(lines, listenMs);
     } finally {
-      this.resetWithMatOut = false; // raw commands can move anything
       this.busy = false;
     }
   }
@@ -341,8 +225,6 @@ export class CutterSession {
   }
 
   async close(): Promise<void> {
-    if (this.watchTimer) clearInterval(this.watchTimer);
-    this.watchTimer = null;
     await this.log.close();
   }
 }

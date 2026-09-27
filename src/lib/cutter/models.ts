@@ -69,7 +69,7 @@ export const CUTTER_MODELS: CutterModel[] = [
     regmarkArgOrder: "height_width",
     homeCommand: null,
     // Tuned on hardware: from upstream's start (10 mm above the top-left mark) the first scan
-    // failed and a retry 3 mm lower found the marks, so start there and retry in 2 mm steps.
+    // missed and a retry 3 mm lower found the marks; starting 3 mm lower then worked first time.
     regmarkScanOffsetMm: 3,
     regmarkSearchStepsMm: [0, 2, 4, 6],
     pressureRange: [1, 33],

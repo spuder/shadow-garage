@@ -575,3 +575,31 @@ left an error on the cutter's own display, so the Cameo 3 now starts its scan 3 
 (`regmarkScanOffsetMm: 3`) and retries in 2 mm steps (`[0, 2, 4, 6]`). The golden test compares
 against upstream with a zero offset. Still open: the Cameo 3's real "mat out" status code (needs a
 log), and tuning the sticker-paper blade settings.
+
+**Incident: carriage crash, and the mat-state work removed.** The Cameo 3 (firmware V1.40) log
+showed status `0` ("ready") on every poll, including with the mat out. The mat-state features of
+the last few iterations all rested on status `2` meaning "mat out", which this cutter never
+sends:
+- require a fresh load;
+- reset with the mat out, then load;
+- the idle mat watch;
+- the "mat is out — continue" button.
+
+Through that button, the unload → reset → load flow then drove the cutter with **no mat**. After
+the reset, "wait for the mat to be loaded" passed instantly on the bogus `0`, so setup and the mark
+scan ran on an empty cutter. It ejected the paper and ran the carriage into the right side. The
+user then pressed the button with the mat still **in**, i.e. reset with the mat loaded, and the job
+worked perfectly with the scan starting 3 mm lower. So the earlier "reset with the mat out" theory
+was wrong, drawn from runs that also had the scan-start problem.
+
+Removed: all of the mat-state machinery above (`resetWithMatOut`, `startMatWatch`,
+`confirmMatOut`, `waitForStatus`, `LoggingTransport.quietly`, the mat-out button and the mat
+in/out status line).
+
+What remains is the sequence that worked: status check → reset (`ESC EOT` with the mat loaded,
+every job) → setup → mark scan (3 mm lower, 2 mm retries) → cut → park. The status check stays but
+is documented as unable to detect a missing mat. The UI and docs tell the user to load the mat
+before sending.
+
+Lesson: don't build flows that move hardware on a status signal that hasn't been confirmed on the
+device. Read the log first.
