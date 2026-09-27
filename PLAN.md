@@ -714,3 +714,10 @@ unless **Print cut lines** is ticked (`buildSheetSVG`/`buildSingleStickerSVG` ta
 `includeCutLines`); Download SVG always keeps them. The log marks where each cut packet starts
 (`CutProgress.onPacket`), to check whether a shift lines up with one. `docs/cutter-setup.md` has
 an "If part of a job shifts" guide.
+
+**Dry run fix.** On the Cameo 3 a dry run traced only the first outline. The whole job went as one
+packet of back-to-back `M` moves; the cutter reported ready after ~2 s and silently dropped the
+rest, although draw packets of the same size run fine. Dry runs now send one move per write and
+wait for the carriage between moves. To keep that affordable, each outline is simplified to 1 mm
+for the dry run only (`DRY_RUN_TOLERANCE_MM`). A 43-sticker traced sheet went from 7,761 moves to
+1,099. Real cuts are unchanged.

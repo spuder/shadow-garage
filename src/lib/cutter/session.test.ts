@@ -124,6 +124,34 @@ describe("dry run", () => {
     expect(points(dry.log)).toEqual(points(cut.log));
     expect(session.log.format()).toMatch(/## job: cut \(dry run, blade up\)/);
   });
+
+  it("simplifies detailed outlines so the one-move-at-a-time trace stays short", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    // a 20 mm circle with 360 points
+    const circle = Array.from({ length: 360 }, (_, k) => [80 + 10 * Math.cos((k * Math.PI) / 180), 80 + 10 * Math.sin((k * Math.PI) / 180)] as [number, number]);
+    t.writes.length = 0;
+    await session.run({ ...job(false), paths: [circle], dryRun: true });
+    const moves = t.writes.filter((w) => /^M\d/.test(w) && !w.startsWith("M0,0")).length;
+    expect(moves).toBeLessThan(30);
+    expect(moves).toBeGreaterThan(4);
+    expect(session.log.format()).toMatch(/## dry run: \d+ moves \(outlines simplified to 1 mm\)/);
+  });
+
+  it("sends the moves one at a time, waiting for the carriage between them", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    const paths = Array.from({ length: 4 }, (_, k) => testSquarePaths(40 + k * 20, 40, 10, 0)[0]);
+    t.writes.length = 0;
+    await session.run({ ...job(false), paths, dryRun: true });
+    const moveWrites = t.writes.filter((w) => /^M\d/.test(w) && !w.startsWith("M0,0"));
+    expect(moveWrites.length).toBe(20); // 4 squares x 5 points
+    expect(moveWrites.every((w) => w.split("\x03").filter(Boolean).length === 1)).toBe(true);
+    // every move is followed by a status poll before the next move
+    const seq = t.writes.map((w) => (/^M\d/.test(w) && !w.startsWith("M0,0") ? "M" : w === "\x1b\x05" ? "?" : "x"));
+    const firstMove = seq.indexOf("M");
+    for (let k = firstMove; k < seq.lastIndexOf("M"); k++) if (seq[k] === "M") expect(seq[k + 1]).toBe("?");
+  });
 });
 
 describe("mark search retries", () => {

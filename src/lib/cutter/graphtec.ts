@@ -326,6 +326,20 @@ export class GraphtecProtocol implements CutterProtocol {
   }
 
   async cut(paths: Contour[], frame: CutFrame, { onProgress, signal, bladeUp, onPacket }: CutProgress = {}): Promise<void> {
+    if (bladeUp) {
+      // Dry run: one move at a time, waiting for the carriage to stop before the next. Sent as one
+      // packet of back-to-back M moves, a real Cameo 3 traced only the first outline and silently
+      // dropped the rest (it reported ready ~2 s in); draws in the same-sized packets run fine.
+      const moves = pathCommands(paths, frame, true);
+      for (let i = 0; i < moves.length; i++) {
+        signal?.throwIfAborted();
+        onPacket?.(i + 1, moves.length, moves[i]);
+        await this.transport.write(frameCommands([moves[i]]));
+        await this.waitForReady({ timeoutMs: 120_000, pollMs: 50, signal });
+        onProgress?.((i + 1) / moves.length);
+      }
+      return;
+    }
     const chunks = chunkFrames(frameCommands(pathCommands(paths, frame, bladeUp)));
     for (let i = 0; i < chunks.length; i++) {
       signal?.throwIfAborted();

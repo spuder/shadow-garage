@@ -6,7 +6,7 @@ import { GraphtecProtocol } from "./graphtec";
 import type { CutMaterial } from "./materials";
 import type { CutterModel } from "./models";
 import { RegmarkNotFoundError, type CutFrame, type CutterProtocol, type RegmarkSpec } from "./protocol";
-import { boundingBox } from "../geometry";
+import { boundingBox, simplify } from "../geometry";
 import { LoggingTransport, type Transport } from "./transport";
 
 export type CutPhase = "waiting" | "loadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
@@ -63,6 +63,9 @@ class JogController implements ManualJog {
     return this.queue;
   }
 }
+
+/** How closely a dry run's blade-up trace follows each outline. */
+const DRY_RUN_TOLERANCE_MM = 1;
 
 function protocolFor(model: CutterModel, transport: Transport): CutterProtocol {
   switch (model.protocol) {
@@ -151,7 +154,12 @@ export class CutterSession {
         await this.searchWithRetries(job.regmarks, events, signal);
       }
       events.onPhase?.("cutting");
-      await this.protocol.cut(job.paths, job.frame, {
+      // A dry run sends one move at a time (see GraphtecProtocol.cut), so trace each outline
+      // simplified to within DRY_RUN_TOLERANCE_MM: traced outlines have hundreds of points, which
+      // would make a full-sheet dry run take the better part of an hour.
+      const paths = job.dryRun ? job.paths.map((p) => simplify(p, DRY_RUN_TOLERANCE_MM)) : job.paths;
+      if (job.dryRun) this.log.note(`dry run: ${paths.reduce((n, p) => n + p.length, 0)} moves (outlines simplified to ${DRY_RUN_TOLERANCE_MM} mm)`);
+      await this.protocol.cut(paths, job.frame, {
         onProgress: events.onProgress,
         signal,
         bladeUp: job.dryRun,

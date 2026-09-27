@@ -70,7 +70,9 @@ sheet to check the blade settings before cutting a printed sheet.
 
 **Dry run** does everything a real sheet job does, including the mark scan, but traces each
 outline with the blade **raised**. Use it before cutting: if the carriage doesn't follow the printed
-outlines, don't cut. Stop the cutter and send the log.
+outlines, don't cut. Stop the cutter and send the log. It sends one move at a time (the Cameo 3
+drops long runs of queued moves) and simplifies each outline to within 1 mm, so it's slower than
+a cut but stays a few minutes even for a full sheet.
 
 **Abort** stops sending and sends the cutter a reset, but a small job is often already entirely in
 the cutter's buffer, and it hasn't been confirmed that the reset stops the blade mid-cut. **If the
