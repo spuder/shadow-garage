@@ -37,6 +37,7 @@ interface CutterUiState {
   jogStepMm: 1 | 5;
   busyOp: boolean; // Home button or raw diagnostics command in progress
   mat: "ready" | "unloaded" | null; // mat state from the session's idle watch
+  phase: CutPhase | null; // current phase of the running job
 }
 
 interface StickerDesign {
@@ -93,7 +94,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
-  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, busyOp: false, mat: null },
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, busyOp: false, mat: null, phase: null },
 };
 
 applyTheme(state.theme);
@@ -151,6 +152,7 @@ const rawSendBtn = document.getElementById("rawSendBtn") as HTMLButtonElement;
 const rawReplyEl = document.getElementById("rawReply") as HTMLPreElement;
 const CUTTER_DEBUG = new URLSearchParams(location.search).has("debug");
 const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
+const matOutBtn = document.getElementById("matOutBtn") as HTMLButtonElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
 const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
@@ -950,6 +952,7 @@ function renderCutter() {
   calCutBtn.disabled = !c.session || running;
   copyLogBtn.disabled = !c.log;
   manualRegBtn.hidden = !c.manualRetryKind || !c.session || running;
+  matOutBtn.hidden = c.phase !== "unloadMat";
 
   jogPad.hidden = !c.jog;
   if (c.jog) {
@@ -1077,6 +1080,7 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
       {
         onPhase: (p) => {
           phase = p;
+          c.phase = p;
           c.statusText = CUT_PHASE_TEXT[p];
           renderCutter();
         },
@@ -1100,6 +1104,7 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
   } finally {
     c.job = null;
     c.jog = null;
+    c.phase = null;
     renderCutter();
   }
 }
@@ -1116,6 +1121,11 @@ cutterConnectBtn.addEventListener("click", () => {
 });
 
 cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
+
+matOutBtn.addEventListener("click", () => {
+  state.cutter.session?.confirmMatOut();
+  matOutBtn.hidden = true;
+});
 
 rawSendBtn.addEventListener("click", async () => {
   const c = state.cutter;

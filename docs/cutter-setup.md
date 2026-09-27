@@ -48,7 +48,9 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
    cutter needs a reset with the mat **out** (resetting with it loaded makes the scan start too
    high on the sheet), and the app does that automatically the moment you take the mat out. The
    status line shows "mat in" / "mat out". If you connect with the mat already loaded, the first
-   print-and-cut job asks you to take it out and load it again, once.
+   print-and-cut job asks you to take it out and load it again, once. If that prompt doesn't
+   notice the mat is out, press **The mat is out — continue** (and send the log: it shows the
+   status code your cutter reports).
 6. The mark scan is one-shot on the cutter, so if it misses, the app retries starting 3, 5 and
    7 mm further down the sheet before giving up.
 

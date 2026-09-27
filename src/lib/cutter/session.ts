@@ -104,6 +104,7 @@ export class CutterSession {
   private watchTimer: ReturnType<typeof setInterval> | null = null;
   private watchTick: Promise<void> | null = null;
   private lastMatStatus: CutterStatus | null = null;
+  private matOutConfirmed = false;
   /** Called when the idle mat watch sees the mat go in or out (see startMatWatch). */
   onMatChange: ((status: CutterStatus) => void) | null = null;
 
@@ -275,9 +276,17 @@ export class CutterSession {
   /** Polls (1 s) until the cutter reports the mat unloaded or loaded, for up to 5 minutes. */
   private async waitForStatus(target: "unloaded" | "ready", signal?: AbortSignal): Promise<void> {
     const deadline = Date.now() + 300_000;
+    if (target === "unloaded") this.matOutConfirmed = false;
     for (;;) {
       signal?.throwIfAborted();
-      if ((await this.protocol.status()) === target) return;
+      const status = await this.protocol.status();
+      if (status === target) return;
+      if (target === "unloaded" && this.matOutConfirmed) {
+        // The status codes come from upstream (0 ready, 1 moving, 2 unloaded); a model that
+        // reports the mat being out differently would otherwise never get past this wait.
+        this.log.note(`mat out, confirmed by the user (cutter reported "${status}")`);
+        return;
+      }
       if (Date.now() >= deadline) break;
       await sleep(1000, signal);
     }
@@ -286,6 +295,11 @@ export class CutterSession {
         ? "The mat wasn't unloaded. Print-and-cut resets the cutter with the mat out: unload it, then load the sheet when asked."
         : "No mat was loaded. Load the mat with the printed sheet and send again."
     );
+  }
+
+  /** The user says the mat is out: ends a "take the mat out" wait even if the cutter's status disagrees. */
+  confirmMatOut() {
+    this.matOutConfirmed = true;
   }
 
   /** Homes the carriage on its own (the panel's Home button). */

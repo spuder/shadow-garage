@@ -559,3 +559,10 @@ finished sheet, load the next, send, with no prompts. Jobs, Home and raw command
 in-flight poll to finish before starting (`acquire`). The in-job unload → reset → load prompts
 remain only as the fallback for connecting with the mat already in. The status line shows the
 mat state.
+
+**"Take the mat out" loop.** On hardware, the in-job unload prompt never finished. Most likely the
+Cameo 3 doesn't report `2` (upstream's "unloaded") when its mat is out. Upstream only knows 0, 1
+and 2 and aborts a job on anything else. The prompt now has a **The mat is out — continue** button
+(`CutterSession.confirmMatOut`), so a wrong or unknown status can't trap the user. The raw status
+replies during that wait are in the log. Once the user's log shows the real code, it goes into
+`parseStatus` so both the prompt and the idle mat watch recognise it automatically.

@@ -125,6 +125,24 @@ describe("print-and-cut job", () => {
     expect(phases.slice(0, 3)).toEqual(["waiting", "loadMat", "setup"]);
   });
 
+  it("lets the user confirm the mat is out when the cutter's status never says so", async () => {
+    // a cutter that reports "3" with the mat out: the wait would never end on its own
+    const t = new FakeTransport(cameo3Responder({ statuses: ["0", "0", "3", "3", "3", "3", "3", "3", "0"] }));
+    const session = await CutterSession.open(t, cameo3);
+    vi.useFakeTimers();
+    const phases: CutPhase[] = [];
+    const run = session.run(job(true), { onPhase: (p) => phases.push(p) });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(phases.at(-1)).toBe("unloadMat");
+    session.confirmMatOut();
+    await vi.advanceTimersByTimeAsync(5000);
+    await run;
+    expect(phases).toEqual(expect.arrayContaining(["unloadMat", "loadMat", "regmarks", "done"]));
+    const text = session.log.format();
+    expect(text).toMatch(/<- 3\|/); // the raw code is in the log for diagnosis
+    expect(text).toMatch(/## mat out, confirmed by the user \(cutter reported "unknown"\)[\s\S]*-> <ESC EOT>/);
+  });
+
   it("gives up if the mat is never taken out, without resetting", async () => {
     const t = new FakeTransport(cameo3Responder({ statuses: ["0"] }));
     const session = await CutterSession.open(t, cameo3);
