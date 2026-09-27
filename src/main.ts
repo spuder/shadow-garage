@@ -911,6 +911,7 @@ downloadPdfBtn.addEventListener("click", async () => {
 const CUT_PHASE_TEXT: Record<CutPhase, string> = {
   waiting: "Checking the cutter…",
   loadMat: "Load the mat into the cutter…",
+  reloadMat: "Unload the mat and load it again (with the next sheet)…",
   homing: "Homing the cutter…",
   setup: "Setting up the blade…",
   manualRegmarks: "Manual registration — position the blade",

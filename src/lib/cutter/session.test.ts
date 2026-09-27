@@ -116,6 +116,75 @@ describe("CutterSession", () => {
     expect(log.slice(inits[2] - 1, inits[2] + 6)).toEqual(["TB50,0", "<ESC EOT>", "FG", "TB71", "FA", "TC", "TG1"]);
   });
 
+  describe("fresh mat load before print-and-cut", () => {
+    it("doesn't ask for a reload on the first job after connecting", async () => {
+      const t = new FakeTransport(cameo3Responder());
+      const session = await CutterSession.open(t, cameo3);
+      const phases: CutPhase[] = [];
+      await session.run(job(true), { onPhase: (p) => phases.push(p) });
+      expect(phases).not.toContain("reloadMat");
+    });
+
+    it("waits for unload + load before the next registered job, then resets on the fresh load", async () => {
+      // job 1 polls twice (mat check, after its one cut packet); job 2's reload wait sees
+      // still loaded, unloaded, unloaded, loaded; then everything's ready
+      const t = new FakeTransport(cameo3Responder({ statuses: ["0", "0", "0", "2", "2", "0"] }));
+      const session = await CutterSession.open(t, cameo3);
+      vi.useFakeTimers();
+      await session.run(job(true));
+      t.writes.length = 0;
+      const phases: CutPhase[] = [];
+      const run = session.run(job(true), { onPhase: (p) => phases.push(p) });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await run;
+      expect(phases[0]).toBe("reloadMat");
+      expect(t.log.slice(0, 6)).toEqual(["<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>", "<ESC ENQ>", "<ESC EOT>"]);
+      expect(session.log.format()).toMatch(/## mat reloaded[\s\S]*-> <ESC EOT>/);
+    });
+
+    it("requires a reload after a failed mark search too", async () => {
+      const t = new FakeTransport(cameo3Responder({ regmarkReply: "    1\x03" }));
+      const session = await CutterSession.open(t, cameo3);
+      await expect(session.run(job(true))).rejects.toThrow(RegmarkNotFoundError);
+      vi.useFakeTimers();
+      const phases: CutPhase[] = [];
+      const run = expect(session.run(job(true), { onPhase: (p) => phases.push(p) })).rejects.toThrow(/wasn't reloaded/);
+      await vi.advanceTimersByTimeAsync(301_000); // cutter keeps reporting ready: never reloaded
+      await run;
+      expect(phases).toEqual(["reloadMat"]);
+      expect(t.log.filter((c) => c === "<ESC EOT>")).toHaveLength(2); // connect + first job only
+    });
+
+    it("doesn't ask for a reload before a test cut, but does after one", async () => {
+      // two polls per job (mat check + one cut packet), then the reload: unloaded, loaded
+      const t = new FakeTransport(cameo3Responder({ statuses: ["0", "0", "0", "0", "2", "0"] }));
+      const session = await CutterSession.open(t, cameo3);
+      vi.useFakeTimers();
+      const phases: CutPhase[] = [];
+      await session.run(job(true));
+      await session.run(job(false), { onPhase: (p) => phases.push(p) });
+      expect(phases).not.toContain("reloadMat");
+      const run = session.run(job(true), { onPhase: (p) => phases.push(p) });
+      await vi.advanceTimersByTimeAsync(5000);
+      await run;
+      expect(phases).toContain("reloadMat");
+    });
+
+    it("can be cancelled while waiting for the reload", async () => {
+      const t = new FakeTransport(cameo3Responder());
+      const session = await CutterSession.open(t, cameo3);
+      await session.run(job(true));
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const run = expect(session.run(job(true), {}, controller.signal)).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(3000);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(2000);
+      await run;
+      expect(session.isBusy).toBe(false);
+    });
+  });
+
   it("skips the mark search for cut-only jobs", async () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);

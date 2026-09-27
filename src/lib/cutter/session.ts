@@ -5,11 +5,11 @@ import type { Contour } from "../geometry";
 import { GraphtecProtocol } from "./graphtec";
 import type { CutMaterial } from "./materials";
 import type { CutterModel } from "./models";
-import type { CutFrame, CutterProtocol, RegmarkSpec } from "./protocol";
+import { CutterNotReadyError, type CutFrame, type CutterProtocol, type RegmarkSpec } from "./protocol";
 import { boundingBox } from "../geometry";
 import { LoggingTransport, type Transport } from "./transport";
 
-export type CutPhase = "waiting" | "loadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
+export type CutPhase = "waiting" | "loadMat" | "reloadMat" | "homing" | "setup" | "manualRegmarks" | "regmarks" | "cutting" | "finishing" | "done";
 
 export interface CutJob {
   paths: Contour[]; // sheet millimetres
@@ -60,6 +60,20 @@ class JogController implements ManualJog {
   }
 }
 
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true }
+    );
+  });
+}
+
 function protocolFor(model: CutterModel, transport: Transport): CutterProtocol {
   switch (model.protocol) {
     case "graphtec-gpgl":
@@ -75,6 +89,13 @@ export class CutterSession {
   readonly log: LoggingTransport;
   private readonly protocol: CutterProtocol;
   private busy = false;
+  /**
+   * True once the app has moved the mat since it was last loaded. The cutter only measures where
+   * the paper really is when the mat is loaded; the per-job reset takes wherever the mat currently
+   * sits as the top. After a job (which parks at the mark origin, or stops mid-scan if it fails),
+   * a registered job therefore needs a fresh load first, or its mark search starts too far down.
+   */
+  private matMoved = false;
 
   private constructor(model: CutterModel, transport: Transport, log: LoggingTransport, protocol: CutterProtocol, firmware: string) {
     this.model = model;
@@ -112,7 +133,15 @@ export class CutterSession {
     if (this.busy) throw new Error("The cutter is already running a job");
     this.busy = true;
     this.noteJob(job);
+    let touched = false;
     try {
+      if (job.regmarks && this.matMoved) {
+        events.onPhase?.("reloadMat");
+        this.log.note("waiting for the mat to be unloaded and loaded again");
+        await this.waitForFreshLoad(signal);
+        this.matMoved = false;
+        this.log.note("mat reloaded");
+      }
       events.onPhase?.("waiting");
       await this.protocol.waitForReady({
         timeoutMs: 120_000,
@@ -124,6 +153,7 @@ export class CutterSession {
       // Cameo 3, the first job after connecting tapped the AutoBlade into its adjust holes correctly,
       // but later jobs in the same connection drifted right; each one inherited position state
       // from the previous job (e.g. the registration-mark origin).
+      touched = true;
       await this.protocol.initialize();
       if (this.model.homeCommand) {
         events.onPhase?.("homing");
@@ -160,8 +190,26 @@ export class CutterSession {
       }
       throw e;
     } finally {
+      if (touched) this.matMoved = true;
       this.busy = false;
     }
+  }
+
+  /** Polls until the cutter has reported the mat unloaded and then loaded again (up to 5 minutes). */
+  private async waitForFreshLoad(signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + 300_000;
+    let sawUnloaded = false;
+    for (;;) {
+      signal?.throwIfAborted();
+      const status = await this.protocol.status();
+      if (status === "unloaded") sawUnloaded = true;
+      else if (status === "ready" && sawUnloaded) return;
+      if (Date.now() >= deadline) break;
+      await sleep(1000, signal);
+    }
+    throw new CutterNotReadyError(
+      "The mat wasn't reloaded. Each print-and-cut job needs a fresh load: unload the mat, put the next sheet on it, load it again, then send."
+    );
   }
 
   /** Homes the carriage on its own (the panel's Home button). */
@@ -172,6 +220,7 @@ export class CutterSession {
     try {
       await this.protocol.home();
     } finally {
+      this.matMoved = true;
       this.busy = false;
     }
   }
@@ -183,6 +232,7 @@ export class CutterSession {
     try {
       return await this.protocol.sendRaw(lines, listenMs);
     } finally {
+      this.matMoved = true; // raw commands can move anything
       this.busy = false;
     }
   }

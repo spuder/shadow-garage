@@ -43,7 +43,12 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
    - push the mat against the **left guide** as it loads;
    - the marks must print **solid matte black**.
 4. Click **Connect**, then **Send to Cutter**. The cutter scans for the marks first; if it can't
-   find them, nothing is cut — reload and send again.
+   find them, nothing is cut.
+5. **Every print-and-cut job needs a freshly loaded mat.** The cutter only measures where the
+   paper really is when the mat is loaded, and a finished or failed job leaves the mat part-way in.
+   So from the second job on, the app shows "Unload the mat and load it again…" and waits until
+   the cutter reports the mat out and back in. That's also the normal flow: new sheet, new load.
+   Test cuts don't need it.
 
 **Test cut** cuts a 10 mm square near the top-left corner without looking for marks — use a scrap
 sheet to check the blade settings before cutting a printed sheet.

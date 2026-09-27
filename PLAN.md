@@ -520,3 +520,14 @@ Each job's command stream is now byte-for-byte one upstream run: the golden test
 stream alone, and a new test checks that back-to-back jobs each start with `ESC EOT`. This also
 corrects the earlier guess that `ESC EOT` re-zeroes coordinates at the carriage's current position:
 the reset is what makes the first job right.
+
+**Fresh mat load before each print-and-cut job.** After the per-job reset, the taps were right
+(10 in a row) but the mark scan got worse on every run. It barely pulled the paper in and failed at
+the first mark, on default settings. Diagnosis: the reset re-references the paper axis to wherever
+the mat currently is. Only loading measures the real paper edge. Two things leave the mat away from
+its loaded position: our end-of-job park (mark-relative `M0,0` = the mark origin, about 1 cm down
+the sheet) and a failed or aborted job. So each later search started further down, past the first
+mark. `CutterSession` now tracks `matMoved`. It's set once a job starts sending commands, and by
+Home and raw commands. A job with registration marks then first waits (up to 5 min) for the
+cutter's status to go unloaded (`2`) and then ready (`0`), before its reset. Cut-only test cuts
+are exempt. This matches the real workflow: new printed sheet, new load.
