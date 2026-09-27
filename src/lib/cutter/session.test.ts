@@ -49,7 +49,8 @@ describe("print-and-cut job", () => {
     // cuttingmat='cameo_12x12', autoblade=True, depth=1), then plot() of a 10mm square at sheet
     // (40,40) with regmark=True, regsearch=True, regwidth=195.9, reglength=259.4,
     // regorigin=(10,10), endposition='start'. Status polls (ESC ENQ) are omitted from both sides.
-    // Compared with upstream's scan start; the Cameo 3 default starts 3 mm lower (tuned on hardware).
+    // Compared with upstream's scan start and media-134 speed (10); the Cameo 3 defaults start the
+    // scan 3 mm lower and cut at speed 5 (both tuned on hardware).
     const upstream = [
       "<ESC EOT>", "FG", "TB71", "FA", "TC",
       "TG1", "FN0", "TB50,0", "\\0,0", "Z6096,6096", "J1", "!10,1", "FX20,1", "FE0,1",
@@ -61,7 +62,7 @@ describe("print-and-cut job", () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, { ...cameo3, regmarkScanOffsetMm: 0 });
     t.writes.length = 0; // each job re-initializes, so a job alone is one full upstream run
-    await session.run(job(true));
+    await session.run({ ...job(true), material: { ...STICKER_PAPER, speed: 10 } });
     expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
   });
 
@@ -269,6 +270,18 @@ describe("manual registration", () => {
 });
 
 describe("abort, log and diagnostics", () => {
+  it("logs where each packet of the cut starts", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    const paths = Array.from({ length: 60 }, (_, i) => testSquarePaths(40 + (i % 10) * 12, 40 + Math.floor(i / 10) * 12, 5, 0)[0]);
+    await session.run({ ...job(false), paths });
+    const notes = session.log.format().match(/## packet \d+\/\d+ starts at [MD]\d+,\d+/g)!;
+    const packets = t.writes.filter((w) => /^[MD]\d/.test(w)).length;
+    expect(packets).toBeGreaterThan(1);
+    expect(notes).toHaveLength(packets);
+    expect(notes[0]).toBe("## packet 1/" + packets + " starts at M800,800");
+  });
+
   it("resets the cutter when a job is aborted mid-cut", async () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);

@@ -61,6 +61,8 @@ interface AppState {
   preserveSharpCorners: boolean;
   gapMm: number;
   sheetMarginMm: number;
+  cutSpeed: number | null; // cutter speed chosen with the slider; null = the paper type's default
+  printCutLines: boolean; // include the red cut outlines when printing (the SVG download always has them)
   regmarksEnabled: boolean;
   regmarkStyle: "standard" | "four_corner";
   designs: StickerDesign[];
@@ -84,6 +86,8 @@ const state: AppState = {
   preserveSharpCorners: false,
   gapMm: 4,
   sheetMarginMm: 8,
+  cutSpeed: null,
+  printCutLines: false,
   regmarksEnabled: true,
   regmarkStyle: "standard",
   designs: [],
@@ -143,6 +147,7 @@ const sheetCountBadge = document.getElementById("sheetCount") as HTMLSpanElement
 const summaryEl = document.getElementById("summary") as HTMLDivElement;
 const downloadSvgBtn = document.getElementById("downloadSvgBtn") as HTMLButtonElement;
 const printBtn = document.getElementById("printBtn") as HTMLButtonElement;
+const printCutLinesToggle = document.getElementById("printCutLinesToggle") as HTMLInputElement;
 const sendToCutterBtn = document.getElementById("sendToCutterBtn") as HTMLButtonElement;
 const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement;
 const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
@@ -155,6 +160,9 @@ const rawReplyEl = document.getElementById("rawReply") as HTMLPreElement;
 const CUTTER_DEBUG = new URLSearchParams(location.search).has("debug");
 const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
 const cutterMaterialEl = document.getElementById("cutterMaterial") as HTMLDivElement;
+const cutSpeedSlider = document.getElementById("cutSpeedSlider") as HTMLInputElement;
+const cutSpeedValue = document.getElementById("cutSpeedValue") as HTMLSpanElement;
+const cutSpeedDefault = document.getElementById("cutSpeedDefault") as HTMLSpanElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
 const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
@@ -200,6 +208,7 @@ function addPaperSwatch(pt: (typeof PAPER_TYPES)[number]) {
   btn.innerHTML = `<span class="paper-swatch-color" style="background:${pt.swatch}"></span><span class="paper-swatch-label">${pt.name}</span>`;
   btn.addEventListener("click", () => {
     state.paperTypeId = pt.id;
+    state.cutSpeed = null; // back to the new paper type's own speed
     paperTypeGrid.querySelectorAll(".paper-swatch").forEach((el) => el.classList.toggle("active", el === btn));
     recompute();
   });
@@ -228,6 +237,12 @@ function inToMm(inch: number): number {
 }
 function fmtIn(mm: number): string {
   return mmToIn(mm).toFixed(2);
+}
+
+/** Cut settings for the selected paper type, with the speed slider's choice if it's been moved. */
+function currentCutMaterial() {
+  const m = currentPaperType().cutMaterial;
+  return state.cutSpeed === null ? m : { ...m, speed: state.cutSpeed };
 }
 
 function currentPaperType() {
@@ -927,11 +942,15 @@ printBtn.addEventListener("click", () => {
   if (state.activeTab === "design") {
     const sel = selectedDesign();
     if (!sel?.design) return;
-    printSvg(buildSingleStickerSVG(sel.design, renderOptionsFor(sel)));
+    printSvg(buildSingleStickerSVG(sel.design, renderOptionsFor(sel), state.printCutLines));
   } else {
     const { items } = computeSheetItems(sheet);
-    printSvg(buildSheetSVG(items, sheet, currentRegmarkStyle()));
+    printSvg(buildSheetSVG(items, sheet, currentRegmarkStyle(), state.printCutLines));
   }
+});
+
+printCutLinesToggle.addEventListener("change", () => {
+  state.printCutLines = printCutLinesToggle.checked;
 });
 
 // ---- cutter ----
@@ -962,8 +981,13 @@ function renderCutter() {
   else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}`;
   else cutterStatusEl.textContent = "Not connected";
 
-  const m = currentPaperType().cutMaterial;
+  const m = currentCutMaterial();
+  const defaultSpeed = currentPaperType().cutMaterial.speed;
   cutterMaterialEl.textContent = `Cut settings: ${m.name} — pressure ${m.pressure}, speed ${m.speed}, blade ${m.autoBladeDepth} (set by Paper Type)`;
+  cutSpeedSlider.value = String(m.speed);
+  cutSpeedValue.textContent = String(m.speed);
+  cutSpeedDefault.textContent = m.speed === defaultSpeed ? "(Paper Type default)" : `(Paper Type default ${defaultSpeed})`;
+  cutSpeedSlider.disabled = running;
 
   cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
   cutterConnectBtn.disabled = !supported || c.connecting || running;
@@ -1047,7 +1071,7 @@ function withDiagnosticOverrides(model: CutterModel): CutterModel {
  * (no marks), or the calibration target (always with marks — it's for checking print-and-cut).
  */
 function buildCutJob(session: CutterSession, kind: CutKind): CutJob {
-  const material = currentPaperType().cutMaterial; // cut settings follow the selected paper type
+  const material = currentCutMaterial();
   const sheet = currentSheet();
   if (kind === "test") {
     return { label: "test square", paths: testSquarePaths(), ...layoutJob(sheet, session.model, false), material };
@@ -1138,6 +1162,12 @@ cutterConnectBtn.addEventListener("click", () => {
 });
 
 cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
+
+cutSpeedSlider.addEventListener("input", () => {
+  const speed = parseInt(cutSpeedSlider.value, 10);
+  state.cutSpeed = speed === currentPaperType().cutMaterial.speed ? null : speed;
+  renderCutter();
+});
 
 
 rawSendBtn.addEventListener("click", async () => {

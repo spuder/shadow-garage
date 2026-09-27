@@ -704,3 +704,13 @@ speed 10 / pressure 20 tore plain paper on the Cameo 3. All sticker types share 
 **Trimmed paper types** to White sticker, Clear sticker and 20 lb printer paper. Holographic,
 Matte black and Glossy silver only differed by the border colour, and that colour was printed: a
 fake lavender, black or grey border inked over the real material. They're removed.
+
+**Slower cutting, printable cut lines, packet markers.** The user saw layer shifts and reported
+the Cameo 3 "binding up". A stalled carriage loses steps, so everything after it shifts. Default
+speeds are halved: sticker 10 → 5, printer paper 5 → 3. A **Speed** slider in the Cutter panel
+overrides the paper type's speed (`state.cutSpeed`, reset when the paper type changes). The golden
+test pins speed 10 to match upstream's media-134 run. Print now leaves out the red cut lines
+unless **Print cut lines** is ticked (`buildSheetSVG`/`buildSingleStickerSVG` take
+`includeCutLines`); Download SVG always keeps them. The log marks where each cut packet starts
+(`CutProgress.onPacket`), to check whether a shift lines up with one. `docs/cutter-setup.md` has
+an "If part of a job shifts" guide.

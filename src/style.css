@@ -648,6 +648,13 @@ select {
 .cutter-material {
   margin: 0 0 8px;
 }
+.cutter-speed {
+  display: block;
+  margin-bottom: 10px;
+}
+.cutter-speed-default {
+  color: var(--text-muted);
+}
 .cutter-error {
   color: var(--danger);
   word-break: break-word;

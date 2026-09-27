@@ -46,7 +46,7 @@ describe("Cameo 3 command sequences", () => {
       "\\0,0",
       "Z6096,6096",
       "J1",
-      "!10,1",
+      "!5,1",
       "FX20,1",
       "FE0,1",
       "FF1,0,1",
@@ -115,7 +115,7 @@ describe("paper types", () => {
     const printer = PAPER_TYPES.find((p) => p.id === "printer-paper-20lb")!;
     expect(printer.adhesive).toBe(false);
     expect(PAPER_TYPES.filter((p) => p.adhesive).every((p) => /sticker/i.test(p.name))).toBe(true);
-    expect(setupCommands(cameo3, PRINTER_PAPER_20LB)).toEqual(expect.arrayContaining(["!5,1", "FX10,1", "TF2,1"]));
+    expect(setupCommands(cameo3, PRINTER_PAPER_20LB)).toEqual(expect.arrayContaining(["!3,1", "FX10,1", "TF2,1"]));
     expect(PRINTER_PAPER_20LB.autoBladeDepth).toBeGreaterThan(sticker.autoBladeDepth);
   });
 });

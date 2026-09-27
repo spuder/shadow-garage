@@ -11,4 +11,13 @@ describe("buildSheetSVG", () => {
     expect(pageRect).toContain('class="sheet-paper"');
     expect(pageRect).toContain('fill="white"');
   });
+
+  it("keeps the cut lines by default and can leave them out for printing", () => {
+    const withLines = buildSheetSVG([], letter, "standard");
+    const without = buildSheetSVG([], letter, "standard", false);
+    expect(withLines).toContain('<g id="cutlines">');
+    expect(without).not.toContain('id="cutlines"');
+    expect(without).toContain('<g id="print">');
+    expect(without).toContain('<g id="regmarks">');
+  });
 });

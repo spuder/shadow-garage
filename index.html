@@ -131,6 +131,10 @@
               <div class="block-title">Cutter</div>
               <div id="cutterStatus" class="cutter-status">Not connected</div>
               <div id="cutterMaterial" class="hint-text cutter-material"></div>
+              <label class="field-label cutter-speed">
+                Speed: <span id="cutSpeedValue">5</span> <span id="cutSpeedDefault" class="cutter-speed-default"></span>
+                <input id="cutSpeedSlider" type="range" min="1" max="10" step="1" value="5" />
+              </label>
               <div class="cutter-buttons">
                 <button id="cutterConnectBtn" class="btn-secondary small">Connect</button>
                 <button id="cutterHomeBtn" class="btn-secondary small" disabled hidden>Home</button>
@@ -173,6 +177,10 @@
 
           <div class="bottom-bar">
             <div class="summary" id="summary">Upload an image to begin</div>
+            <label class="checkbox-row">
+              <input id="printCutLinesToggle" type="checkbox" />
+              Print cut lines (the downloaded SVG always has them)
+            </label>
             <div class="export-buttons">
               <button id="printBtn" class="btn-primary" disabled>Print</button>
               <button id="downloadSvgBtn" class="btn-secondary" disabled>Download SVG</button>

@@ -325,10 +325,11 @@ export class GraphtecProtocol implements CutterProtocol {
     await this.awaitRegistration();
   }
 
-  async cut(paths: Contour[], frame: CutFrame, { onProgress, signal, bladeUp }: CutProgress = {}): Promise<void> {
+  async cut(paths: Contour[], frame: CutFrame, { onProgress, signal, bladeUp, onPacket }: CutProgress = {}): Promise<void> {
     const chunks = chunkFrames(frameCommands(pathCommands(paths, frame, bladeUp)));
     for (let i = 0; i < chunks.length; i++) {
       signal?.throwIfAborted();
+      onPacket?.(i + 1, chunks.length, decoder.decode(chunks[i].subarray(0, chunks[i].indexOf(ETX))));
       await this.transport.write(chunks[i]);
       // Don't overrun the cutter's buffer: let it work through each packet before sending the next.
       await this.waitForReady({ timeoutMs: 120_000, pollMs: 50, signal });

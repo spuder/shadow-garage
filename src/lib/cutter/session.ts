@@ -151,7 +151,13 @@ export class CutterSession {
         await this.searchWithRetries(job.regmarks, events, signal);
       }
       events.onPhase?.("cutting");
-      await this.protocol.cut(job.paths, job.frame, { onProgress: events.onProgress, signal, bladeUp: job.dryRun });
+      await this.protocol.cut(job.paths, job.frame, {
+        onProgress: events.onProgress,
+        signal,
+        bladeUp: job.dryRun,
+        // Marks where each packet starts, to check whether a mid-job shift lines up with one.
+        onPacket: (i, of, first) => this.log.note(`packet ${i}/${of} starts at ${first}`),
+      });
       events.onPhase?.("finishing");
       await this.protocol.finish();
       events.onPhase?.("done");

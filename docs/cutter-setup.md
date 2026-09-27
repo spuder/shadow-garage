@@ -10,11 +10,13 @@ settings (shown in the Cutter panel):
 
 | Paper type | Cut | Pressure | Speed | Blade |
 |---|---|---|---|---|
-| Adhesive sticker sheets (white, clear) | kiss cut, backing left intact | 20 | 10 | 1 |
-| 20 lb printer paper (no adhesive) | cut all the way through | 10 | 5 | 2 |
+| Adhesive sticker sheets (white, clear) | kiss cut, backing left intact | 20 | 5 | 1 |
+| 20 lb printer paper (no adhesive) | cut all the way through | 10 | 3 | 2 |
 
 All of these are starting values, not yet tuned on hardware. Run **Test cut** on a scrap of the
-same stock first.
+same stock first. The **Speed** slider in the Cutter panel overrides the paper type's speed
+(it resets when you pick another paper type); slower is safer — at speed 10 the Cameo 3 bound up
+and shifted jobs.
 
 ## macOS
 
@@ -46,7 +48,8 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
 1. Lay out the sheet with **Registration Marks** on and the **Standard (3-mark)** style — the
    Cameo 3 can't read four-corner marks.
 2. Click **Print** and print at **100% / Actual size**. Any printer scaling moves the stickers
-   relative to the marks and the cut will miss.
+   relative to the marks and the cut will miss. The red cut lines are left out of the print
+   unless you tick **Print cut lines** (the downloaded SVG always has them).
 3. Load it carefully. The mark scan only looks near where each mark should be, so small errors
    make it miss:
    - put the sheet in the **top-left corner of the mat grid**, square to the grid lines;
@@ -78,6 +81,25 @@ cutter is doing something wrong, switch it off.**
 After a failed scan, **Try manual registration** appears. Use the arrow pad (1 mm or 5 mm steps) to
 move the blade over the corner of the top-left black square, then **Register here**. This hasn't
 been confirmed on a Cameo 3 yet; if it doesn't work, please send the log.
+
+## If part of a job shifts
+
+A shift partway through a job means the cutter lost its position — everything after that point
+is offset. The app sends absolute coordinates, so a software glitch would draw a stray line
+rather than move everything after it.
+
+1. **Which way did it move?** Sideways: the carriage lost position. Down the sheet: the mat
+   slipped in the rollers.
+2. **Slow down.** Lower the **Speed** slider (try 3) and run it again. Binding up at speed is the
+   most common cause.
+3. **Run Dry run** on the same sheet. The blade stays up, so nothing drags. If the trace doesn't
+   shift, the blade catching the paper is the cause: lower the speed or pressure, or pick the
+   right paper type (**20 lb printer paper** for plain paper). If it still shifts, look at the
+   machine and mat.
+4. **Check the mat:** still tacky, pushed against the left guide as it loads, gripped by both
+   pinch rollers, with clear space behind the cutter for it to travel.
+5. **Send Copy log.** It marks where each packet of the job starts (`## packet 3/7 starts at …`),
+   which shows whether a shift lines up with the start of a packet.
 
 ## Checking print-and-cut alignment
 

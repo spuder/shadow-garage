@@ -28,6 +28,8 @@ export interface CutProgress {
   signal?: AbortSignal;
   /** Dry run: trace every path with the blade raised (moves only), to see where a cut would land. */
   bladeUp?: boolean;
+  /** Called as each packet of the job is sent (1-based), with the packet's first command. */
+  onPacket?: (packet: number, of: number, firstCommand: string) => void;
 }
 
 export interface WaitOptions {

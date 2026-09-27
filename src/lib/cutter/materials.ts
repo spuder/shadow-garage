@@ -12,29 +12,30 @@ export interface CutMaterial {
 }
 
 // Adhesive sticker sheets: a kiss cut through the sticker layer, leaving the backing intact.
-// Starting values are inkscape-silhouette's "Sticker Sheet" entry (media 134). They have not yet
-// been tuned on real hardware for a clean kiss cut — adjust after test cuts. Note: per upstream,
-// a pressure of 19 or more makes the Cameo run its track-enhancing roller pass automatically.
+// Pressure and depth are inkscape-silhouette's "Sticker Sheet" entry (media 134), not yet tuned for
+// a clean kiss cut. Its speed 10 (the Cameo 3's maximum) made the carriage bind up and lose
+// position mid-job, shifting everything cut afterwards, so it's halved. Note: per upstream, a
+// pressure of 19 or more makes the Cameo run its track-enhancing roller pass automatically.
 export const STICKER_PAPER: CutMaterial = {
   id: "sticker-paper",
   name: "Sticker paper",
   mediaId: 134,
   pressure: 20,
-  speed: 10,
+  speed: 5,
   autoBladeDepth: 1,
 };
 
 // Plain 20 lb (75 g/m²) copy/printer paper: cut all the way through (there's no backing).
 // Based on inkscape-silhouette's "Print Paper Light Weight" (media 132, pressure 5), raised to 10
-// with the blade out to 2 so it reliably cuts through rather than scoring, and slowed to 5: at the
-// sticker preset's speed 10 and pressure 20, plain paper tore and the carriage lost position on the
-// Cameo 3. Untested starting values — check with Test cut.
+// with the blade out to 2 so it reliably cuts through rather than scoring, and slowed to 3: at
+// higher speeds plain paper tore and the carriage bound up and lost position on the Cameo 3.
+// Untested starting values — check with Test cut.
 export const PRINTER_PAPER_20LB: CutMaterial = {
   id: "printer-paper-20lb",
   name: "20 lb printer paper",
   mediaId: 132,
   pressure: 10,
-  speed: 5,
+  speed: 3,
   autoBladeDepth: 2,
 };
 
