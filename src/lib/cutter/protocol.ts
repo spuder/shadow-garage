@@ -26,6 +26,8 @@ export interface CutFrame {
 export interface CutProgress {
   onProgress?: (fraction: number) => void;
   signal?: AbortSignal;
+  /** Dry run: trace every path with the blade raised (moves only), to see where a cut would land. */
+  bladeUp?: boolean;
 }
 
 export interface WaitOptions {

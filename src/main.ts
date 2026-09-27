@@ -33,6 +33,7 @@ interface CutterUiState {
   error: string | null;
   log: LoggingTransport | null; // kept after disconnecting so it can still be copied
   manualRetryKind: CutKind | null; // set when the mark search failed, to offer manual registration
+  manualRetryDryRun: boolean; // whether that failed job was a dry run
   jog: { jog: ManualJog; resolve: () => void; reject: (e: Error) => void } | null; // manual registration in progress
   jogStepMm: 1 | 5;
   busyOp: boolean; // Home button or raw diagnostics command in progress
@@ -92,7 +93,7 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
-  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, jog: null, jogStepMm: 1, busyOp: false },
+  cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, manualRetryDryRun: false, jog: null, jogStepMm: 1, busyOp: false },
 };
 
 applyTheme(state.theme);
@@ -153,6 +154,7 @@ const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
 const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
+const dryRunBtn = document.getElementById("dryRunBtn") as HTMLButtonElement;
 const manualRegBtn = document.getElementById("manualRegBtn") as HTMLButtonElement;
 const jogPad = document.getElementById("jogPad") as HTMLDivElement;
 const jogStepBtn = document.getElementById("jogStepBtn") as HTMLButtonElement;
@@ -943,6 +945,7 @@ function renderCutter() {
   rawBlock.hidden = !CUTTER_DEBUG;
   rawSendBtn.disabled = !c.session || running;
   calCutBtn.disabled = !c.session || running;
+  dryRunBtn.disabled = !c.session || running || state.designs.length === 0;
   copyLogBtn.disabled = !c.log;
   manualRegBtn.hidden = !c.manualRetryKind || !c.session || running;
 
@@ -1037,7 +1040,7 @@ function waitForManualRegistration(jog: ManualJog): Promise<void> {
   });
 }
 
-async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "auto") {
+async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "auto", dryRun = false) {
   const c = state.cutter;
   const session = c.session;
   if (!session || c.job || c.busyOp) return;
@@ -1046,7 +1049,7 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
 
   let job: CutJob;
   try {
-    job = { ...buildCutJob(session, kind), registration };
+    job = { ...buildCutJob(session, kind), registration, dryRun };
   } catch (e) {
     c.error = errorText(e);
     renderCutter();
@@ -1069,7 +1072,7 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
         },
         onProgress: (f) => {
           if (phase !== "cutting") return;
-          c.statusText = `Cutting… ${Math.round(f * 100)}%`;
+          c.statusText = `${dryRun ? "Tracing, blade up" : "Cutting"}… ${Math.round(f * 100)}%`;
           renderCutter();
         },
         onManualRegistration: waitForManualRegistration,
@@ -1083,7 +1086,10 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
   } catch (e) {
     c.statusText = controller.signal.aborted ? "Aborted" : null;
     if (!controller.signal.aborted) c.error = errorText(e);
-    if (e instanceof RegmarkNotFoundError && registration === "auto") c.manualRetryKind = kind;
+    if (e instanceof RegmarkNotFoundError && registration === "auto") {
+      c.manualRetryKind = kind;
+      c.manualRetryDryRun = dryRun;
+    }
   } finally {
     c.job = null;
     c.jog = null;
@@ -1147,6 +1153,7 @@ cutterHomeBtn.addEventListener("click", async () => {
   }
 });
 calCutBtn.addEventListener("click", () => void runCutterJob("calibration"));
+dryRunBtn.addEventListener("click", () => void runCutterJob("sheet", "auto", true));
 
 calSheetBtn.addEventListener("click", async () => {
   calSheetBtn.disabled = true;
@@ -1180,7 +1187,7 @@ copyLogBtn.addEventListener("click", async () => {
 
 manualRegBtn.addEventListener("click", () => {
   const kind = state.cutter.manualRetryKind;
-  if (kind) void runCutterJob(kind, "manual");
+  if (kind) void runCutterJob(kind, "manual", state.cutter.manualRetryDryRun);
 });
 
 jogPad.addEventListener("click", async (e) => {

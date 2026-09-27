@@ -107,6 +107,24 @@ describe("print-and-cut job", () => {
   });
 });
 
+describe("dry run", () => {
+  it("does the full setup and mark scan, then traces the same points with the blade up", async () => {
+    const cut = new FakeTransport(cameo3Responder());
+    await (await CutterSession.open(cut, cameo3)).run(job(true));
+    const dry = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(dry, cameo3);
+    await session.run({ ...job(true), dryRun: true });
+
+    expect(dry.log.some((c) => /^D\d/.test(c))).toBe(false); // nothing cut
+    expect(dry.log).toContain("TF1,1");
+    expect(dry.log).toContain("TB123,5188,3918,60,0");
+    // same positions as the real cut, every draw turned into a move
+    const points = (log: string[]) => log.filter((c) => /^[MD]\d/.test(c) && c !== "M0,0").map((c) => c.slice(1));
+    expect(points(dry.log)).toEqual(points(cut.log));
+    expect(session.log.format()).toMatch(/## job: cut \(dry run, blade up\)/);
+  });
+});
+
 describe("mark search retries", () => {
   it("retries further down the sheet until the marks are found", async () => {
     const t = new FakeTransport(cameo3Responder({ regmarkReply: [NOT_FOUND, NOT_FOUND, FOUND] }));

@@ -131,8 +131,12 @@ export function moveCommand(xMm: number, yMm: number): string {
   return `M${mmToSU(yMm)},${mmToSU(xMm)}`;
 }
 
-/** Move/draw commands for each path. Throws rather than silently clipping anything outside the frame. */
-export function pathCommands(paths: Contour[], frame: CutFrame): string[] {
+/**
+ * Move/draw commands for each path. Throws rather than silently clipping anything outside the frame.
+ * With bladeUp, every point is a move (M) instead of a draw (D): the carriage traces the outline
+ * without cutting.
+ */
+export function pathCommands(paths: Contour[], frame: CutFrame, bladeUp = false): string[] {
   const { clip } = frame;
   const cmds: string[] = [];
   for (const path of paths) {
@@ -144,7 +148,7 @@ export function pathCommands(paths: Contour[], frame: CutFrame): string[] {
         throw new CutOutOfBoundsError(`A cut line reaches outside the cutter's allowed area (${x.toFixed(1)}, ${y.toFixed(1)} mm).`);
       }
       // Axes swapped: device takes (down, across).
-      cmds.push(`${i === 0 ? "M" : "D"}${mmToSU(y)},${mmToSU(x)}`);
+      cmds.push(`${i === 0 || bladeUp ? "M" : "D"}${mmToSU(y)},${mmToSU(x)}`);
     });
   }
   return cmds;
@@ -321,8 +325,8 @@ export class GraphtecProtocol implements CutterProtocol {
     await this.awaitRegistration();
   }
 
-  async cut(paths: Contour[], frame: CutFrame, { onProgress, signal }: CutProgress = {}): Promise<void> {
-    const chunks = chunkFrames(frameCommands(pathCommands(paths, frame)));
+  async cut(paths: Contour[], frame: CutFrame, { onProgress, signal, bladeUp }: CutProgress = {}): Promise<void> {
+    const chunks = chunkFrames(frameCommands(pathCommands(paths, frame, bladeUp)));
     for (let i = 0; i < chunks.length; i++) {
       signal?.throwIfAborted();
       await this.transport.write(chunks[i]);

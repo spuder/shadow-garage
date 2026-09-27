@@ -603,3 +603,15 @@ before sending.
 
 Lesson: don't build flows that move hardware on a status signal that hasn't been confirmed on the
 device. Read the log first.
+
+**Second crash: registration is unreliable run to run.** A real sheet job (a 50 mm square at sheet
+(30,30) mm, printed on plain paper) found the marks at the first try. The cutter then cut a
+~38 × 13 mm rectangle far too high, partly off the paper, and the user cut the power. The user's
+PDF confirms the layout (marks at the standard positions, outline at 30–80 mm), and the log
+confirms the commands (mark-relative 20–70 mm = 400–1400 SU). So the app's geometry was right and
+the cutter's own registration transform was wrong. The calibration cut, through the same code
+path, had been spot on. The cause is unknown: no artwork could have been mistaken for a mark. Next
+step is diagnosis without risk. **Dry run** (`CutJob.dryRun` → `pathCommands(..., bladeUp)`)
+runs the full job but turns every draw into a move, so the user can watch where the cutter
+thinks the outlines are. The docs now also say plainly that Abort can't be relied on to stop a
+buffered job: switch the cutter off.

@@ -20,6 +20,8 @@ export interface CutJob {
   material: CutMaterial;
   /** Short description for the log, e.g. "sheet" or "calibration". */
   label?: string;
+  /** Run everything (reset, setup, mark scan) but trace the paths with the blade raised. */
+  dryRun?: boolean;
 }
 
 /** Lets the UI jog the tool onto the top-left mark during manual registration. Positions are media millimetres. */
@@ -149,7 +151,7 @@ export class CutterSession {
         await this.searchWithRetries(job.regmarks, events, signal);
       }
       events.onPhase?.("cutting");
-      await this.protocol.cut(job.paths, job.frame, { onProgress: events.onProgress, signal });
+      await this.protocol.cut(job.paths, job.frame, { onProgress: events.onProgress, signal, bladeUp: job.dryRun });
       events.onPhase?.("finishing");
       await this.protocol.finish();
       events.onPhase?.("done");
@@ -215,7 +217,7 @@ export class CutterSession {
     const r = job.regmarks;
     this.log.note(
       [
-        `job: ${job.label ?? "cut"}, ${job.paths.length} paths`,
+        `job: ${job.label ?? "cut"}${job.dryRun ? " (dry run, blade up)" : ""}, ${job.paths.length} paths`,
         `sheet bbox (${b.minX.toFixed(2)}, ${b.minY.toFixed(2)})-(${b.maxX.toFixed(2)}, ${b.maxY.toFixed(2)}) mm`,
         `frame offset (${f.offsetXmm}, ${f.offsetYmm}) mm`,
         r ? `marks ${r.style} ${job.registration ?? "auto"} origin (${r.originXmm}, ${r.originYmm}) size ${r.widthMm.toFixed(2)}x${r.heightMm.toFixed(2)} mm` : "no marks",

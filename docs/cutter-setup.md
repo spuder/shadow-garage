@@ -55,7 +55,13 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
 **Test cut** cuts a 10 mm square near the top-left corner without looking for marks — use a scrap
 sheet to check the blade settings before cutting a printed sheet.
 
-**Abort** stops sending and resets the cutter.
+**Dry run** does everything a real sheet job does, including the mark scan, but traces each
+outline with the blade **raised**. Use it before cutting: if the carriage doesn't follow the printed
+outlines, don't cut. Stop the cutter and send the log.
+
+**Abort** stops sending and sends the cutter a reset, but a small job is often already entirely in
+the cutter's buffer, and it hasn't been confirmed that the reset stops the blade mid-cut. **If the
+cutter is doing something wrong, switch it off.**
 
 ### If the marks still aren't found: manual registration (experimental)
 
