@@ -491,3 +491,13 @@ Letter, with Letter selected in the app.
 - **Next:** measure the Test cut square (10 mm means units are fine) and the calibration cut
   with each argument order, then fix `regmarkArgOrder` (or units) for the Cameo 3 and update the
   golden test to note the deliberate difference from upstream.
+
+**Homing (added after the second hardware report).** The user saw the mark search start from
+wherever the carriage was, and the AutoBlade's depth-setting taps land on the paper. We never
+homed: the handshake and Abort send `ESC EOT` (initialize), which apparently re-zeroes coordinates
+at the carriage's current position, and Graphtec.py doesn't home either. Silhouette Studio's
+documented startup sequence (upstream `Commands.md`) sends `TT`, "home the cutter". Every job now
+runs: mat check → home (`model.homeCommand`, `TT` for the Cameo 3, then wait until ready) → setup
+→ registration → cut. There's also a **Home** button, and `?homeCmd=TT|H|none` in case the
+Cameo 3 ignores `TT`. This is the one deliberate difference from upstream's transcript in the
+golden test. Homing from the wrong origin might also explain the half-size cut; unconfirmed.

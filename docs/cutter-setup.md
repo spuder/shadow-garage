@@ -45,6 +45,10 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
 4. Click **Connect**, then **Send to Cutter**. The cutter scans for the marks first; if it can't
    find them, nothing is cut — reload and send again.
 
+Every job first **homes** the cutter: the carriage travels to its home stop before the AutoBlade
+sets its depth and before the mark scan, so both happen at known positions. **Home** does just
+that step on its own.
+
 **Test cut** cuts a 10 mm square near the top-left corner without looking for marks — use a scrap
 sheet to check the blade settings before cutting a printed sheet.
 
@@ -71,8 +75,12 @@ been confirmed on a Cameo 3 yet; if it doesn't work, please send the log.
 Graphtec.py sends the mark distances in the search command height first; a Silhouette Studio
 trace suggests width first. To try the other order, open the app with `?regmarkArgs=width_height`
 (for example `http://localhost:5183/?regmarkArgs=width_height`), reconnect, and run the
-calibration cut again. `?regmarkArgs=height_width` (the default) switches back. The log's first
-line shows which order was used.
+calibration cut again. `?regmarkArgs=height_width` (the default) switches back.
+
+Homing uses the `TT` command, which Silhouette Studio sends at startup. If **Home** doesn't move
+the carriage, try `?homeCmd=H` (GPGL's generic Home), or `?homeCmd=none` to turn homing off.
+Switches can be combined: `?regmarkArgs=width_height&homeCmd=H`. The log's first line shows which
+settings were used.
 
 ## Current limitations
 
