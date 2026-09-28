@@ -10,6 +10,12 @@
       <header class="topbar">
         <div class="brand">Shadow<span>Garage</span></div>
         <div class="topbar-actions">
+          <button id="cutterPill" class="cutter-pill" data-state="off" title="Cutter connection">
+            <span class="status-dot" aria-hidden="true"></span>
+            <svg class="link-icon link-icon-bt" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>
+            <svg class="link-icon link-icon-usb" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M15 7v4h1v2h-3V5h2l-3-4-3 4h2v8H8v-2.07c.7-.37 1.2-1.08 1.2-1.93 0-1.21-.99-2.2-2.2-2.2-1.21 0-2.2.99-2.2 2.2 0 .85.5 1.56 1.2 1.93V13c0 1.11.89 2 2 2h3v3.05c-.71.37-1.2 1.1-1.2 1.95 0 1.22.99 2.2 2.2 2.2 1.21 0 2.2-.98 2.2-2.2 0-.85-.49-1.58-1.2-1.95V15h3c1.11 0 2-.89 2-2v-2h1V7h-4z"/></svg>
+            <span id="cutterPillText">Connect cutter</span>
+          </button>
           <a class="icon-btn" href="https://github.com/spuder/shadow-garage" target="_blank" rel="noopener noreferrer" title="View on GitHub" aria-label="View on GitHub">
             <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
           </a>
@@ -129,7 +135,7 @@
 
             <div class="panel-block" id="cutterBlock">
               <div class="block-title">Cutter</div>
-              <div id="cutterStatus" class="cutter-status">Not connected</div>
+              <div id="cutterStatusRow" class="cutter-status" data-state="off"><span class="status-dot" aria-hidden="true"></span><span id="cutterStatus">Not connected</span></div>
               <div id="cutterMaterial" class="hint-text cutter-material"></div>
               <label class="field-label cutter-speed">
                 Speed: <span id="cutSpeedValue">1</span> <span id="cutSpeedDefault" class="cutter-speed-default"></span>
@@ -140,8 +146,7 @@
                 <input id="cutPressureSlider" type="range" min="1" max="33" step="1" value="1" />
               </label>
               <div class="cutter-buttons">
-                <button id="cutterConnectBtn" class="btn-secondary small">Connect USB</button>
-                <button id="cutterBtConnectBtn" class="btn-secondary small" hidden>Connect Bluetooth</button>
+                <button id="cutterConnectBtn" class="btn-secondary small">Connect…</button>
                 <button id="cutterHomeBtn" class="btn-secondary small" disabled hidden>Home</button>
                 <button id="cutterTestBtn" class="btn-secondary small" disabled>Test cut</button>
                 <button id="copyLogBtn" class="btn-secondary small" disabled>Copy log</button>
@@ -151,7 +156,7 @@
                 <button id="calCutBtn" class="btn-secondary small" disabled>Calibration cut</button>
                 <button id="dryRunBtn" class="btn-secondary small" disabled title="Scan the marks, then trace the sheet's outlines with the blade raised">Dry run</button>
               </div>
-              <div class="hint-text"><strong>Load the mat before sending</strong> — the Cameo 3 reports "ready" even with no mat, so the app can't check for you. Silhouette Cameo 3 over USB or Bluetooth · AutoBlade. For Bluetooth, pair the cutter in your computer's Bluetooth settings first (and wake it if it's asleep). Cuts the sheet as laid out in Sheet Preview. Test cut is a 10&nbsp;mm square on scrap (no marks). To check print-and-cut alignment, print the calibration sheet at 100% and run the calibration cut on it. <strong>Dry run</strong> does everything for the sheet, including the mark scan, but traces the outlines with the blade raised — watch where it goes before cutting.</div>
+              <div class="hint-text"><strong>Load the mat before sending</strong> — the Cameo 3 reports "ready" even with no mat, so the app can't check for you. Silhouette Cameo 3 over USB or Bluetooth · AutoBlade. Cuts the sheet as laid out in Sheet Preview. Test cut is a 10&nbsp;mm square on scrap (no marks). To check print-and-cut alignment, print the calibration sheet at 100% and run the calibration cut on it. <strong>Dry run</strong> does everything for the sheet, including the mark scan, but traces the outlines with the blade raised — watch where it goes before cutting.</div>
               <div id="cutterError" class="hint-text cutter-error" hidden></div>
               <div id="rawBlock" class="raw-block" hidden>
                 <div class="hint-text">Diagnostics — raw commands, one per line (<code>&lt;ESC EOT&gt;</code> and <code>&lt;ESC ENQ&gt;</code> for escapes). Replies show below and in the log.</div>
@@ -195,6 +200,34 @@
         </aside>
       </main>
     </div>
+    <dialog id="cutterDialog" class="cutter-dialog" aria-labelledby="cutterDialogTitle">
+      <div class="dialog-header">
+        <h2 id="cutterDialogTitle">Cutter</h2>
+        <button id="cutterDialogClose" class="dialog-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <div id="cutterDialogConnect">
+          <div class="dialog-label">Connect via</div>
+          <div class="link-toggle" id="cutterLinkToggle">
+            <button data-link="usb"><svg class="link-icon-usb" viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M15 7v4h1v2h-3V5h2l-3-4-3 4h2v8H8v-2.07c.7-.37 1.2-1.08 1.2-1.93 0-1.21-.99-2.2-2.2-2.2-1.21 0-2.2.99-2.2 2.2 0 .85.5 1.56 1.2 1.93V13c0 1.11.89 2 2 2h3v3.05c-.71.37-1.2 1.1-1.2 1.95 0 1.22.99 2.2 2.2 2.2 1.21 0 2.2-.98 2.2-2.2 0-.85-.49-1.58-1.2-1.95V15h3c1.11 0 2-.89 2-2v-2h1V7h-4z"/></svg> USB</button>
+            <button data-link="bluetooth"><svg class="link-icon-bt" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg> Bluetooth</button>
+          </div>
+          <button id="cutterDialogConnectBtn" class="btn-primary dialog-main-btn">Connect</button>
+        </div>
+        <div id="cutterDialogConnected" class="cutter-device" hidden>
+          <span class="status-dot" aria-hidden="true"></span>
+          <div>
+            <div id="cutterDeviceName" class="cutter-device-name"></div>
+            <div id="cutterDeviceDetail" class="cutter-device-detail"></div>
+          </div>
+          <button id="cutterDialogDisconnectBtn" class="btn-secondary small">Disconnect</button>
+        </div>
+        <div id="cutterDialogError" class="hint-text cutter-error" hidden></div>
+        <div id="cutterDialogHint" class="dialog-hint"></div>
+      </div>
+    </dialog>
     <div id="printArea"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

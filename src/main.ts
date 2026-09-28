@@ -159,7 +159,20 @@ const printCutLinesToggle = document.getElementById("printCutLinesToggle") as HT
 const sendToCutterBtn = document.getElementById("sendToCutterBtn") as HTMLButtonElement;
 const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement;
 const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
-const cutterBtConnectBtn = document.getElementById("cutterBtConnectBtn") as HTMLButtonElement;
+const cutterStatusRow = document.getElementById("cutterStatusRow") as HTMLDivElement;
+const cutterPill = document.getElementById("cutterPill") as HTMLButtonElement;
+const cutterPillText = document.getElementById("cutterPillText") as HTMLSpanElement;
+const cutterDialog = document.getElementById("cutterDialog") as HTMLDialogElement;
+const cutterDialogClose = document.getElementById("cutterDialogClose") as HTMLButtonElement;
+const cutterLinkToggle = document.getElementById("cutterLinkToggle") as HTMLDivElement;
+const cutterDialogConnect = document.getElementById("cutterDialogConnect") as HTMLDivElement;
+const cutterDialogConnectBtn = document.getElementById("cutterDialogConnectBtn") as HTMLButtonElement;
+const cutterDialogConnected = document.getElementById("cutterDialogConnected") as HTMLDivElement;
+const cutterDeviceName = document.getElementById("cutterDeviceName") as HTMLDivElement;
+const cutterDeviceDetail = document.getElementById("cutterDeviceDetail") as HTMLDivElement;
+const cutterDialogDisconnectBtn = document.getElementById("cutterDialogDisconnectBtn") as HTMLButtonElement;
+const cutterDialogError = document.getElementById("cutterDialogError") as HTMLDivElement;
+const cutterDialogHint = document.getElementById("cutterDialogHint") as HTMLDivElement;
 const cutterTestBtn = document.getElementById("cutterTestBtn") as HTMLButtonElement;
 const cutterHomeBtn = document.getElementById("cutterHomeBtn") as HTMLButtonElement;
 const rawBlock = document.getElementById("rawBlock") as HTMLDivElement;
@@ -1003,11 +1016,47 @@ function renderCutter() {
   const bluetooth = BT_SERIAL ? webSerialSupported() : webBluetoothSupported();
   const supported = usb || bluetooth;
   const running = c.job !== null || c.busyOp;
+  const link = c.session ? sessionLink(c.session) : preferredLink(usb, bluetooth);
+
+  // Status dot: grey idle, amber connecting, green connected (pulsing while it works), red on error.
+  const dotState = c.connecting ? "connecting" : c.session ? (running ? "busy" : "connected") : c.error ? "error" : "off";
+  cutterPill.dataset.state = dotState;
+  cutterPill.dataset.link = link;
+  cutterStatusRow.dataset.state = dotState;
+  cutterPillText.textContent = c.connecting ? "Connecting…" : c.session ? c.session.label : "Connect cutter";
+  cutterPill.title = c.session ? `${c.session.label} · ${link === "usb" ? "USB" : "Bluetooth"} — click to manage` : "Connect a cutter";
+
+  cutterDialogConnect.hidden = !!c.session;
+  cutterDialogConnected.hidden = !c.session;
+  cutterDialogConnected.dataset.state = dotState;
+  for (const btn of cutterLinkToggle.querySelectorAll<HTMLButtonElement>("button")) {
+    const l = btn.dataset.link as CutterLink;
+    btn.classList.toggle("active", l === link);
+    btn.disabled = c.connecting || !(l === "usb" ? usb : bluetooth);
+  }
+  cutterDialogConnectBtn.disabled = !supported || c.connecting;
+  cutterDialogConnectBtn.textContent = c.connecting ? "Connecting…" : "Connect";
+  if (c.session) {
+    cutterDeviceName.textContent = c.session.label;
+    cutterDeviceDetail.textContent = `${link === "usb" ? "USB" : "Bluetooth"} · firmware ${c.session.firmware}`;
+  }
+  cutterDialogDisconnectBtn.disabled = running;
+  cutterDialogError.hidden = !c.error;
+  cutterDialogError.textContent = c.error ?? "";
+  cutterDialogHint.textContent = !supported
+    ? "Requires Chrome or Edge on desktop."
+    : c.session
+      ? running
+        ? "The cutter is busy — wait for the job to finish before disconnecting."
+        : "Load the mat before sending a job."
+      : link === "usb"
+        ? "Plug the Cameo in and turn it on. Silhouette Cameo 3 · Requires Chrome or Edge."
+        : "Pair the cutter in your computer's Bluetooth settings first, and wake it if it's asleep. Silhouette Cameo 3 · Requires Chrome or Edge.";
 
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
   else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
   else if (c.statusText) cutterStatusEl.textContent = c.statusText;
-  else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.transport instanceof WebUsbTransport ? "USB" : "Bluetooth"} · ${c.session.firmware}`;
+  else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${link === "usb" ? "USB" : "Bluetooth"} · ${c.session.firmware}`;
   else cutterStatusEl.textContent = "Not connected";
 
   const m = currentCutMaterial();
@@ -1022,12 +1071,9 @@ function renderCutter() {
   cutPressureDefault.textContent = m.pressure === defaultPressure ? "(Paper Type default)" : `(Paper Type default ${defaultPressure})`;
   cutPressureSlider.disabled = running;
 
-  // One button disconnects whichever link is in use.
-  cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect USB";
-  cutterConnectBtn.hidden = !c.session && !usb;
+  // Opens the connection dialog, or disconnects whichever link is in use.
+  cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect…";
   cutterConnectBtn.disabled = !supported || c.connecting || running;
-  cutterBtConnectBtn.hidden = !!c.session || !bluetooth;
-  cutterBtConnectBtn.disabled = c.connecting || running;
   cutterTestBtn.disabled = !c.session || running;
   cutterHomeBtn.hidden = !c.session?.model.homeCommand;
   cutterHomeBtn.disabled = !c.session || running;
@@ -1051,7 +1097,27 @@ function renderCutter() {
   sendToCutterBtn.disabled = c.busyOp || (!c.job && (!c.session || state.designs.length === 0));
 }
 
-async function connectCutter(link: "usb" | "bluetooth") {
+type CutterLink = "usb" | "bluetooth";
+const CUTTER_LINK_KEY = "shadow-garage-cutter-link";
+
+function sessionLink(session: CutterSession): CutterLink {
+  return session.transport instanceof WebUsbTransport ? "usb" : "bluetooth";
+}
+
+// The link picked last time, if this browser still supports it; otherwise whichever one it does.
+function preferredLink(usb: boolean, bluetooth: boolean): CutterLink {
+  const stored = localStorage.getItem(CUTTER_LINK_KEY);
+  if (stored === "usb" && usb) return "usb";
+  if (stored === "bluetooth" && bluetooth) return "bluetooth";
+  return usb || !bluetooth ? "usb" : "bluetooth";
+}
+
+function openCutterDialog() {
+  renderCutter();
+  cutterDialog.showModal();
+}
+
+async function connectCutter(link: CutterLink) {
   const c = state.cutter;
   c.connecting = true;
   c.error = null;
@@ -1094,6 +1160,7 @@ async function connectCutter(link: "usb" | "bluetooth") {
     if (session) {
       c.session = session;
       c.manualRetryKind = null;
+      cutterDialog.close();
     }
   } catch (e) {
     c.error = errorText(e);
@@ -1230,10 +1297,27 @@ function abortCutterJob() {
 
 cutterConnectBtn.addEventListener("click", () => {
   if (state.cutter.session) void disconnectCutter();
-  else void connectCutter("usb");
+  else openCutterDialog();
 });
 
-cutterBtConnectBtn.addEventListener("click", () => void connectCutter("bluetooth"));
+cutterPill.addEventListener("click", openCutterDialog);
+cutterDialogClose.addEventListener("click", () => cutterDialog.close());
+// A click on the backdrop lands on the <dialog> itself; clicks on its contents don't.
+cutterDialog.addEventListener("click", (e) => {
+  if (e.target === cutterDialog) cutterDialog.close();
+});
+cutterLinkToggle.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-link]");
+  if (!btn || btn.disabled) return;
+  localStorage.setItem(CUTTER_LINK_KEY, btn.dataset.link!);
+  state.cutter.error = null;
+  renderCutter();
+});
+cutterDialogConnectBtn.addEventListener("click", () => {
+  const link = cutterLinkToggle.querySelector<HTMLButtonElement>("button.active")?.dataset.link as CutterLink;
+  void connectCutter(link);
+});
+cutterDialogDisconnectBtn.addEventListener("click", () => void disconnectCutter());
 
 cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
 
