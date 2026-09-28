@@ -11,10 +11,12 @@ import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
 import { buildCalibrationSVG, calibrationPaths } from "./lib/cutter/calibration";
 import { buildCutPaths, CutJobError, layoutJob, testSquarePaths } from "./lib/cutter/job";
-import type { CutterModel } from "./lib/cutter/models";
+import { provisionalBluetoothModel, type CutterModel } from "./lib/cutter/models";
 import { CutterCancelledError, RegmarkNotFoundError } from "./lib/cutter/protocol";
 import { CutterSession, type CutJob, type CutPhase, type ManualJog } from "./lib/cutter/session";
 import type { LoggingTransport } from "./lib/cutter/transport";
+import { reconnectBleCutter, requestBleCutter, webBluetoothSupported, WebBluetoothTransport } from "./lib/cutter/webBluetoothTransport";
+import { identifyBluetoothModel, reconnectBluetoothCutter, requestBluetoothCutter, webSerialSupported, WebSerialTransport } from "./lib/cutter/webSerialTransport";
 import { reconnectUsbCutter, requestUsbCutter, webUsbSupported, WebUsbTransport } from "./lib/cutter/webUsbTransport";
 
 const MM_PER_IN = 25.4;
@@ -156,6 +158,7 @@ const printCutLinesToggle = document.getElementById("printCutLinesToggle") as HT
 const sendToCutterBtn = document.getElementById("sendToCutterBtn") as HTMLButtonElement;
 const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement;
 const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
+const cutterBtConnectBtn = document.getElementById("cutterBtConnectBtn") as HTMLButtonElement;
 const cutterTestBtn = document.getElementById("cutterTestBtn") as HTMLButtonElement;
 const cutterHomeBtn = document.getElementById("cutterHomeBtn") as HTMLButtonElement;
 const rawBlock = document.getElementById("rawBlock") as HTMLDivElement;
@@ -163,6 +166,9 @@ const rawInput = document.getElementById("rawInput") as HTMLTextAreaElement;
 const rawSendBtn = document.getElementById("rawSendBtn") as HTMLButtonElement;
 const rawReplyEl = document.getElementById("rawReply") as HTMLPreElement;
 const CUTTER_DEBUG = new URLSearchParams(location.search).has("debug");
+// Bluetooth goes over BLE (Web Bluetooth) unless ?btSerial=1 (or a Web Serial switch) picks Bluetooth
+// Classic RFCOMM via Web Serial. A Cameo 3 paired as Classic on macOS never answered on its serial port.
+const BT_SERIAL = ["btSerial", "btAnyPort", "btService"].some((k) => new URLSearchParams(location.search).has(k));
 const cutterErrorEl = document.getElementById("cutterError") as HTMLDivElement;
 const cutterMaterialEl = document.getElementById("cutterMaterial") as HTMLDivElement;
 const cutSpeedSlider = document.getElementById("cutSpeedSlider") as HTMLInputElement;
@@ -992,13 +998,15 @@ function errorText(e: unknown): string {
 
 function renderCutter() {
   const c = state.cutter;
-  const supported = webUsbSupported();
+  const usb = webUsbSupported();
+  const bluetooth = BT_SERIAL ? webSerialSupported() : webBluetoothSupported();
+  const supported = usb || bluetooth;
   const running = c.job !== null || c.busyOp;
 
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
   else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
   else if (c.statusText) cutterStatusEl.textContent = c.statusText;
-  else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.firmware}`;
+  else if (c.session) cutterStatusEl.textContent = `${c.session.label} · ${c.session.transport instanceof WebUsbTransport ? "USB" : "Bluetooth"} · ${c.session.firmware}`;
   else cutterStatusEl.textContent = "Not connected";
 
   const m = currentCutMaterial();
@@ -1013,8 +1021,12 @@ function renderCutter() {
   cutPressureDefault.textContent = m.pressure === defaultPressure ? "(Paper Type default)" : `(Paper Type default ${defaultPressure})`;
   cutPressureSlider.disabled = running;
 
-  cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect";
+  // One button disconnects whichever link is in use.
+  cutterConnectBtn.textContent = c.session ? "Disconnect" : "Connect USB";
+  cutterConnectBtn.hidden = !c.session && !usb;
   cutterConnectBtn.disabled = !supported || c.connecting || running;
+  cutterBtConnectBtn.hidden = !!c.session || !bluetooth;
+  cutterBtConnectBtn.disabled = c.connecting || running;
   cutterTestBtn.disabled = !c.session || running;
   cutterHomeBtn.hidden = !c.session?.model.homeCommand;
   cutterHomeBtn.disabled = !c.session || running;
@@ -1038,7 +1050,7 @@ function renderCutter() {
   sendToCutterBtn.disabled = c.busyOp || (!c.job && (!c.session || state.designs.length === 0));
 }
 
-async function connectCutter() {
+async function connectCutter(link: "usb" | "bluetooth") {
   const c = state.cutter;
   c.connecting = true;
   c.error = null;
@@ -1046,10 +1058,40 @@ async function connectCutter() {
   renderCutter();
   try {
     // Reuse a cutter this site was already granted, so there's no picker after the first time.
-    const conn = (await reconnectUsbCutter()) ?? (await requestUsbCutter());
-    if (conn) {
-      c.session = await CutterSession.open(conn.transport, withDiagnosticOverrides(conn.model));
-      c.log = c.session.log;
+    let session: CutterSession | null = null;
+    if (link === "usb") {
+      const conn = (await reconnectUsbCutter()) ?? (await requestUsbCutter());
+      if (conn) session = await CutterSession.open(conn.transport, withDiagnosticOverrides(conn.model), { onLog: (log) => (c.log = log) });
+    } else if (!BT_SERIAL) {
+      const transport = (await reconnectBleCutter()) ?? (await requestBleCutter());
+      const provisional = provisionalBluetoothModel();
+      if (transport && !provisional) await transport.close();
+      if (transport && provisional) {
+        transport.onLost = () => onBluetoothLost(transport);
+        session = await CutterSession.openAndIdentify(
+          transport,
+          withDiagnosticOverrides(provisional),
+          (fw, log) => withDiagnosticOverrides(identifyBluetoothModel(fw, log, transport.deviceName)),
+          { onLog: (log) => (c.log = log) }
+        );
+      }
+    } else {
+      const params = new URLSearchParams(location.search);
+      const serviceOverride = params.get("btService")?.toLowerCase() || null;
+      const anyPort = params.has("btAnyPort");
+      const conn =
+        (anyPort ? null : await reconnectBluetoothCutter({ serviceOverride })) ?? (await requestBluetoothCutter({ serviceOverride, anyPort }));
+      if (conn) {
+        session = await CutterSession.openAndIdentify(
+          conn.transport,
+          withDiagnosticOverrides(conn.provisionalModel),
+          (fw, log) => withDiagnosticOverrides(identifyBluetoothModel(fw, log)),
+          { onLog: (log) => (c.log = log) }
+        );
+      }
+    }
+    if (session) {
+      c.session = session;
       c.manualRetryKind = null;
     }
   } catch (e) {
@@ -1187,8 +1229,10 @@ function abortCutterJob() {
 
 cutterConnectBtn.addEventListener("click", () => {
   if (state.cutter.session) void disconnectCutter();
-  else void connectCutter();
+  else void connectCutter("usb");
 });
+
+cutterBtConnectBtn.addEventListener("click", () => void connectCutter("bluetooth"));
 
 cutterTestBtn.addEventListener("click", () => void runCutterJob("test"));
 
@@ -1319,6 +1363,32 @@ if (webUsbSupported()) {
     state.cutter.session = null;
     state.cutter.statusText = null;
     state.cutter.error = "The cutter was unplugged.";
+    void session.close();
+    renderCutter();
+  });
+}
+
+function onBluetoothLost(transport: WebBluetoothTransport) {
+  const session = state.cutter.session;
+  if (!session || session.transport !== transport) return;
+  abortCutterJob();
+  state.cutter.session = null;
+  state.cutter.statusText = null;
+  state.cutter.error = "Lost the Bluetooth connection to the cutter (turned off or out of range).";
+  void session.close();
+  renderCutter();
+}
+
+if (webSerialSupported()) {
+  // Fires when a granted Bluetooth port goes away (cutter off or out of range). A lost link also
+  // fails the transport's reads, so a running job stops either way; this just says why.
+  navigator.serial.addEventListener("disconnect", (e) => {
+    const session = state.cutter.session;
+    if (!session || !(session.transport instanceof WebSerialTransport) || session.transport.port !== (e.target as SerialPort | null)) return;
+    abortCutterJob();
+    state.cutter.session = null;
+    state.cutter.statusText = null;
+    state.cutter.error = "Lost the Bluetooth connection to the cutter (turned off or out of range).";
     void session.close();
     renderCutter();
   });

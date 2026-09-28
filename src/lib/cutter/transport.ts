@@ -1,6 +1,7 @@
 // A byte pipe to a cutter. Protocols (graphtec.ts, ...) sit on top of this and never touch
-// WebUSB / Web Serial / Web Bluetooth directly, so adding a transport (v2: Bluetooth RFCOMM via
-// Web Serial) is one new file implementing this interface.
+// WebUSB / Web Serial / Web Bluetooth directly, so adding a transport (webUsbTransport.ts,
+// webSerialTransport.ts for Bluetooth RFCOMM; future: BLE via Web Bluetooth) is one new file
+// implementing this interface.
 
 export interface Transport {
   /** Human-readable description of the connected device, for the status line. */
