@@ -8,6 +8,7 @@ import { downloadSvgString } from "./lib/download";
 import { printSvg } from "./lib/print";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
+import { isSupportedBrowser, showUnsupportedBrowserAlert } from "./lib/browserCheck";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
 
 const MM_PER_IN = 25.4;
@@ -864,3 +865,4 @@ printBtn.addEventListener("click", () => {
 
 // ---- initial render ----
 render();
+if (!isSupportedBrowser()) showUnsupportedBrowserAlert();
