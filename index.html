@@ -140,7 +140,8 @@
                 <input id="cutPressureSlider" type="range" min="1" max="33" step="1" value="1" />
               </label>
               <div class="cutter-buttons">
-                <button id="cutterConnectBtn" class="btn-secondary small">Connect</button>
+                <button id="cutterConnectBtn" class="btn-secondary small">Connect USB</button>
+                <button id="cutterBtConnectBtn" class="btn-secondary small" hidden>Connect Bluetooth</button>
                 <button id="cutterHomeBtn" class="btn-secondary small" disabled hidden>Home</button>
                 <button id="cutterTestBtn" class="btn-secondary small" disabled>Test cut</button>
                 <button id="copyLogBtn" class="btn-secondary small" disabled>Copy log</button>
@@ -150,7 +151,7 @@
                 <button id="calCutBtn" class="btn-secondary small" disabled>Calibration cut</button>
                 <button id="dryRunBtn" class="btn-secondary small" disabled title="Scan the marks, then trace the sheet's outlines with the blade raised">Dry run</button>
               </div>
-              <div class="hint-text"><strong>Load the mat before sending</strong> — the Cameo 3 reports "ready" even with no mat, so the app can't check for you. Silhouette Cameo 3 over USB · AutoBlade. Cuts the sheet as laid out in Sheet Preview. Test cut is a 10&nbsp;mm square on scrap (no marks). To check print-and-cut alignment, print the calibration sheet at 100% and run the calibration cut on it. <strong>Dry run</strong> does everything for the sheet, including the mark scan, but traces the outlines with the blade raised — watch where it goes before cutting.</div>
+              <div class="hint-text"><strong>Load the mat before sending</strong> — the Cameo 3 reports "ready" even with no mat, so the app can't check for you. Silhouette Cameo 3 over USB or Bluetooth · AutoBlade. For Bluetooth, pair the cutter in your computer's Bluetooth settings first (and wake it if it's asleep). Cuts the sheet as laid out in Sheet Preview. Test cut is a 10&nbsp;mm square on scrap (no marks). To check print-and-cut alignment, print the calibration sheet at 100% and run the calibration cut on it. <strong>Dry run</strong> does everything for the sheet, including the mark scan, but traces the outlines with the blade raised — watch where it goes before cutting.</div>
               <div id="cutterError" class="hint-text cutter-error" hidden></div>
               <div id="rawBlock" class="raw-block" hidden>
                 <div class="hint-text">Diagnostics — raw commands, one per line (<code>&lt;ESC EOT&gt;</code> and <code>&lt;ESC ENQ&gt;</code> for escapes). Replies show below and in the log.</div>

@@ -1,8 +1,8 @@
 # Cutting directly from the browser
 
-Shadow Garage can send a sheet straight to a **Silhouette Cameo 3** over USB — no Silhouette
-Studio needed. It uses WebUSB, so it needs **Chrome or Edge on desktop** (Firefox and Safari don't
-implement WebUSB). The page must be served over HTTPS or from `localhost`. Locally, `npm run dev -- --port 5183` serves it at
+Shadow Garage can send a sheet straight to a **Silhouette Cameo 3** over USB or Bluetooth — no
+Silhouette Studio needed. It uses WebUSB and Web Serial, so it needs **Chrome or Edge on desktop**
+(Chrome 117 or newer for Bluetooth; Firefox and Safari implement neither). The page must be served over HTTPS or from `localhost`. Locally, `npm run dev -- --port 5183` serves it at
 `http://localhost:5183/shadow-garage/` (the path matches the GitHub Pages deployment).
 
 The AutoBlade is the only supported blade for now. The **Paper Type** you pick also picks the cut
@@ -25,7 +25,7 @@ lasts, and carries on when you press **Resume** (or press **Abort** in the app t
 ## macOS
 
 Nothing to install. Quit Silhouette Studio (it holds the USB connection), plug in the cutter, and
-click **Connect**.
+click **Connect USB**. For Bluetooth, see [Bluetooth](#bluetooth-macos-and-linux).
 
 ## Linux
 
@@ -45,7 +45,34 @@ a print service) has the device open.
 Not supported yet. Windows attaches its USB printer driver (`usbprint.sys`) to the cutter, and that
 blocks browser access. The only workaround is replacing the driver with WinUSB using
 [Zadig](https://zadig.akeo.ie/), which may stop Silhouette Studio from seeing the cutter until you
-roll the driver back in Device Manager. Bluetooth support (planned) won't have this problem.
+roll the driver back in Device Manager. Bluetooth isn't tested on Windows either.
+
+## Bluetooth (macOS and Linux)
+
+The Cameo 3 can also be driven over Bluetooth. This is new and not yet confirmed on hardware; USB
+is the proven path.
+
+1. Unplug the USB cable, quit Silhouette Studio, and turn on the cutter's Bluetooth.
+2. **Pair the cutter with the computer first**: **System Settings → Bluetooth** on macOS, or
+   `bluetoothctl` (`scan on`, `pair <address>`, `trust <address>`) on Linux. It shows up as e.g.
+   `CAMEO3-30411C`. Wake the cutter first if it's asleep, or it won't appear or answer.
+3. Load the mat, click **Connect Bluetooth**, and pick the cutter in Chrome's list. Next time the
+   app reconnects without asking, as long as the cutter is on and in range.
+
+This uses Bluetooth Low Energy (the cutter's Silhouette GATT service). Pairing the cutter with macOS
+instead makes a `/dev/cu.CAMEO3-…` serial port, but a Cameo 3 didn't answer on it.
+
+Everything else (print and cut, dry run, pause, abort) works as over USB, only slower to send. If
+the cutter turns off or goes out of range, the job stops with a "lost the Bluetooth connection"
+error; reconnect and run it again from the start.
+
+**Bluetooth Classic (serial port) instead**, for diagnosing: `?btSerial=1` switches Connect
+Bluetooth to Web Serial, which only sees cutters paired with the OS. `?btAnyPort=1` also lists every
+serial port (pick the `cu.` port named after the cutter), and `?btService=<uuid>` asks for another
+RFCOMM service class.
+
+Either way, **Copy log** records which link was used and the cutter's firmware reply, even when the
+connection fails. Please include it in a bug report.
 
 ## Print and cut
 
@@ -59,7 +86,7 @@ roll the driver back in Device Manager. Bluetooth support (planned) won't have t
    - put the sheet in the **top-left corner of the mat grid**, square to the grid lines;
    - push the mat against the **left guide** as it loads;
    - the marks must print **solid matte black**.
-4. **Load the mat first, then** click **Connect** and **Send to Cutter**. The Cameo 3 reports
+4. **Load the mat first, then** click **Connect USB** (or **Connect Bluetooth**) and **Send to Cutter**. The Cameo 3 reports
    "ready" even with no mat loaded, so the app can't check for you. Never send with the mat out:
    the cutter will set up and scan anyway, and the scan can run the carriage into the side.
 5. Every job resets the cutter (with the mat loaded), sets the blade, scans for the marks, then
@@ -151,3 +178,5 @@ taps still drift, send the log from two back-to-back test cuts.
 - The sticker-paper pressure, speed and blade depth (`src/lib/cutter/materials.ts`) are
   inkscape-silhouette's defaults and still need tuning for a clean kiss cut.
 - Letter and A4 sheets only — A3 doesn't fit on the 12×12 mat.
+- **Bluetooth** is for the Cameo 3 only, and not yet confirmed on hardware. Other models would need
+  adding to `src/lib/cutter/models.ts` first.

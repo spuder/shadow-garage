@@ -84,6 +84,11 @@ function protocolFor(model: CutterModel, transport: Transport): CutterProtocol {
   }
 }
 
+export interface OpenOptions {
+  /** Receives the connection log before the handshake, so it can still be copied if the handshake fails. */
+  onLog?: (log: LoggingTransport) => void;
+}
+
 export class CutterSession {
   readonly model: CutterModel;
   readonly firmware: string;
@@ -102,14 +107,41 @@ export class CutterSession {
   }
 
   /** Handshakes with the cutter on an already-open transport; closes the transport if that fails. */
-  static async open(transport: Transport, model: CutterModel): Promise<CutterSession> {
+  static async open(transport: Transport, model: CutterModel, opts: OpenOptions = {}): Promise<CutterSession> {
+    return CutterSession.handshake(transport, model, () => model, opts);
+  }
+
+  /**
+   * Like open(), for links that don't say which model is on the other end (Bluetooth has no USB
+   * ids). The handshake runs with `provisional` (reset and FG don't depend on the model), then
+   * `identify` picks the real model from the firmware reply, or throws if it isn't supported.
+   */
+  static async openAndIdentify(
+    transport: Transport,
+    provisional: CutterModel,
+    identify: (firmware: string, log: LoggingTransport) => CutterModel,
+    opts: OpenOptions = {}
+  ): Promise<CutterSession> {
+    return CutterSession.handshake(transport, provisional, identify, opts);
+  }
+
+  private static async handshake(
+    transport: Transport,
+    first: CutterModel,
+    identify: (firmware: string, log: LoggingTransport) => CutterModel,
+    { onLog }: OpenOptions
+  ): Promise<CutterSession> {
     const log = new LoggingTransport(transport);
-    log.note(`connect: ${model.manufacturer} ${model.name} via ${transport.label}; mark search args ${model.regmarkArgOrder}; scan offset ${model.regmarkScanOffsetMm} mm; home ${model.homeCommand ?? "none"}`);
-    const protocol = protocolFor(model, log);
+    onLog?.(log);
+    const describe = (m: CutterModel) =>
+      `${m.manufacturer} ${m.name} via ${transport.label}; mark search args ${m.regmarkArgOrder}; scan offset ${m.regmarkScanOffsetMm} mm; home ${m.homeCommand ?? "none"}`;
+    log.note(`connect: ${describe(first)}`);
     try {
-      const { firmware } = await protocol.initialize();
+      const { firmware } = await protocolFor(first, log).initialize();
       log.note(`firmware: ${firmware}`);
-      return new CutterSession(model, transport, log, protocol, firmware);
+      const model = identify(firmware, log);
+      if (model !== first) log.note(`identified: ${describe(model)}`);
+      return new CutterSession(model, transport, log, protocolFor(model, log), firmware);
     } catch (e) {
       log.note(`initialization failed: ${(e as Error).message}`);
       await log.close();

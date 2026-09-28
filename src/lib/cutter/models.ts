@@ -16,8 +16,12 @@ export interface CutterModel {
   name: string;
   protocol: ProtocolId;
   usb?: { vendorId: number; productId: number };
-  /** v2 placeholder: Bluetooth Classic (RFCOMM via Web Serial) or BLE (Web Bluetooth) details. */
-  bluetooth?: { rfcommServiceClassId?: string; bleServiceUuid?: string };
+  /**
+   * Bluetooth: BLE via Web Bluetooth (the default), or Classic RFCOMM via Web Serial with
+   * rfcommServiceClassId. Bluetooth has no USB ids, so the model is identified by the FG reply or the
+   * advertised name (e.g. "CAMEO3-30411C") starting with one of firmwarePrefixes.
+   */
+  bluetooth?: { rfcommServiceClassId: string; firmwarePrefixes: string[] };
   bedWidthMm: number;
   maxLengthMm: number;
   marginLeftMm: number;
@@ -54,6 +58,9 @@ export interface CutterModel {
   mat: { id: string; widthMm: number; heightMm: number };
 }
 
+/** Bluetooth Serial Port Profile (SPP), service class 0x1101. */
+export const SERIAL_PORT_PROFILE_UUID = "00001101-0000-1000-8000-00805f9b34fb";
+
 export const CUTTER_MODELS: CutterModel[] = [
   {
     id: "silhouette-cameo3",
@@ -61,6 +68,9 @@ export const CUTTER_MODELS: CutterModel[] = [
     name: "Cameo 3",
     protocol: "graphtec-gpgl",
     usb: { vendorId: 0x0b4d, productId: 0x112f },
+    // The standard Serial Port Profile UUID. Upstream connects to raw RFCOMM channel 1 and never
+    // looks the service up, so this is unconfirmed on hardware; ?btService=<uuid> overrides it.
+    bluetooth: { rfcommServiceClassId: SERIAL_PORT_PROFILE_UUID, firmwarePrefixes: ["CAMEO3", "CAMEO 3"] },
     bedWidthMm: 304.8,
     maxLengthMm: 3000,
     marginLeftMm: 0,
@@ -92,4 +102,29 @@ export function modelForUsb(vendorId: number, productId: number): CutterModel | 
 /** Filters for navigator.usb.requestDevice(), so the browser's picker only lists supported cutters. */
 export function usbFilters(): USBDeviceFilter[] {
   return CUTTER_MODELS.filter((m) => m.usb).map((m) => ({ vendorId: m.usb!.vendorId, productId: m.usb!.productId }));
+}
+
+/** Service class ids to offer in the Web Serial picker, so it lists Bluetooth cutters. */
+export function bluetoothServiceClassIds(): string[] {
+  return [...new Set(CUTTER_MODELS.flatMap((m) => (m.bluetooth ? [m.bluetooth.rfcommServiceClassId] : [])))];
+}
+
+/** The model a Bluetooth handshake starts with, before the firmware reply identifies the real one. */
+export function provisionalBluetoothModel(): CutterModel | undefined {
+  return CUTTER_MODELS.find((m) => m.bluetooth);
+}
+
+/**
+ * Picks the model for a Bluetooth connection from its FG reply, then from the advertised device
+ * name. If neither matches but only one known model has Bluetooth, that one is assumed (`guessed`):
+ * the reply may not name the model (over USB a Cameo 3 has been seen to answer just "CAMEO V1.10").
+ */
+export function modelForBluetoothFirmware(firmware: string, deviceName = ""): { model: CutterModel; guessed: boolean } | undefined {
+  const bt = CUTTER_MODELS.filter((m) => m.bluetooth);
+  for (const text of [firmware, deviceName]) {
+    const t = text.trim().toUpperCase();
+    const match = t && bt.find((m) => m.bluetooth!.firmwarePrefixes.some((p) => t.startsWith(p.toUpperCase())));
+    if (match) return { model: match, guessed: false };
+  }
+  return bt.length === 1 ? { model: bt[0], guessed: true } : undefined;
 }

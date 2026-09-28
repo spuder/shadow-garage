@@ -3,7 +3,7 @@
     "target": "es2023",
     "module": "esnext",
     "lib": ["ES2023", "DOM"],
-    "types": ["vite/client", "w3c-web-usb"],
+    "types": ["vite/client", "w3c-web-usb", "w3c-web-serial", "web-bluetooth"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 

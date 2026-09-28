@@ -743,3 +743,173 @@ sharp corners are now stored on each `StickerDesign`. The controls edit the sele
 block title names it when there's more than one), and a new sticker starts from the last values
 chosen (`state.marginMm` / `state.preserveSharpCorners`). Every cut material now defaults to
 pressure 1, speed 1, confirmed on a Cameo 3; the golden test pins upstream's 20 / 10 explicitly.
+
+## 12. Send to cutter over Bluetooth Classic (Cameo 3, Web Serial) — built, not yet hardware-verified
+
+Adds a second way to connect to the same Cameo 3: Bluetooth Classic (RFCOMM) through the Web Serial
+API, next to the existing WebUSB path. Everything above the byte pipe (`graphtec.ts`, `session.ts`,
+`job.ts`, the Cutter panel's job flow) stays the same. This is the "v2" that §11 and
+`transport.ts`'s header comment already anticipate.
+
+**Decisions:**
+- **Bluetooth Classic only, Cameo 3 only.** The Cameo 3 speaks GPGL over RFCOMM. BLE (the vendor GATT
+  service used by the Cameo 4/5 and Portrait 3+, documented in upstream's `BLETransport.py`) is a
+  separate Web Bluetooth transport and is left out: there's no hardware to test it on, and those
+  models aren't in `models.ts` yet.
+- **macOS and Linux.** Both already work over USB; Bluetooth adds a cable-free option. Windows isn't
+  a target. It will probably work, since Chrome's RFCOMM support is on all desktop platforms, but it
+  isn't tested or advertised, and the USB note in `usbAccessHint` stays as it is.
+- **Chrome/Edge 117+ only.** That's when Web Serial gained RFCOMM (`allowedBluetoothServiceClassIds`;
+  Chrome 130 added `connected` on Bluetooth ports). Firefox and Safari have no Web Serial.
+- **The OS does the pairing.** Web Serial only sees devices that are already paired. The app tells
+  the user to pair first; it doesn't try to discover devices.
+- **Same hardware rules as USB.** Every §11/§11a constraint still applies unchanged over Bluetooth:
+  reset with the mat loaded at the start of every job, one blade-up move per write on dry runs,
+  mark-search retries, low speeds, and status polling between packets.
+
+### 12a. Step 0 — hardware spike (do this before writing the transport)
+
+These unknowns decide the design. Answer them with a throwaway page in `?debug=1` mode, or from the
+DevTools console on the dev server:
+1. **Service class id.** Does the Cameo 3 advertise the standard SPP UUID
+   (`00001101-0000-1000-8000-00805f9b34fb`) or a vendor UUID? Upstream skips SDP and connects to
+   raw channel 1, so it never had to find out. On Linux, `sdptool browse <addr>` (or `bluetoothctl info`)
+   lists the UUIDs. In Chrome, try `requestPort({ allowedBluetoothServiceClassIds: [SPP] })` and check
+   whether the paired cutter appears in the picker.
+2. **macOS path.** Check whether the port Chrome offers is its native RFCOMM port (`getInfo()` returns
+   `bluetoothServiceClassId`) or a `/dev/cu.*` node that macOS created (no `getInfo()` ids). Both can
+   be opened; the difference only matters for how we filter and reconnect.
+3. **Pairing.** Note whether a PIN is needed (and which one), and whether the cutter shows anything on
+   its screen.
+4. **Firmware reply.** Record what `FG` returns over Bluetooth, e.g. `CAMEO3 V1.xx`. This is how the
+   model is identified, because Bluetooth has no USB ids. Upstream matches on the prefix `CAMEO3`.
+5. **Throughput and write size.** Send the golden-test job's command stream. Watch for dropped bytes
+   with big writes, and compare a packet's wall-clock time with USB. If data goes missing, reduce the
+   write chunk size until it stops.
+6. **Status polls.** Check that `ESC ENQ` replies arrive complete and ETX-terminated, possibly split
+   across chunks. `readReply` already joins split chunks.
+7. **Disconnects.** Power-cycle the cutter mid-idle, and walk out of range, and record what the
+   `ReadableStream` reader and the port's `disconnect` event do.
+
+Record the answers in a new §12b before building.
+
+### 12c. Build steps
+
+1. **Types.** Add `@types/w3c-web-serial` to devDependencies (it's not in TS's DOM lib yet). Check
+   that it includes `allowedBluetoothServiceClassIds` / `bluetoothServiceClassId`; if not, add a
+   small ambient `.d.ts`.
+2. **`models.ts`.** Replace the `bluetooth?` placeholder with
+   `bluetooth?: { rfcommServiceClassId: string; firmwarePrefix: string }` and fill it in for the Cameo 3
+   from the spike (e.g. SPP UUID, `"CAMEO3"`). Add `modelForFirmware(fg)` (case-insensitive prefix
+   match, like upstream's `_match_bluetooth_hardware`) and `bluetoothServiceClassIds()` for the picker
+   filters. Unit tests: `"CAMEO3 V1.05"` → Cameo 3, and an unknown string → undefined.
+3. **`webSerialTransport.ts`** (new, mirrors `webUsbTransport.ts`):
+   - `WebSerialTransport implements Transport`. It opens the port with `port.open({ baudRate: 115200 })`
+     (RFCOMM ignores the rate, but it's required), then one read loop pulls chunks from
+     `port.readable.getReader()` into a `ByteQueue`. Unlike WebUSB this read *could* be cancelled,
+     but using the same queue keeps `read()`/`drain()` semantics identical for the protocol.
+   - `write()` goes through one long-lived writer and splits writes at `WRITE_CHUNK_BYTES` (4096 to
+     start, lowered if the spike finds drops).
+   - `close()` releases the reader lock via `reader.cancel()` and the writer via `writer.releaseLock()`,
+     then `port.close()`. Stream errors and the port's `disconnect` event call
+     `queue.fail(new TransportClosedError(...))`, so a lost link surfaces the same way an unplug does.
+   - `label`: "Cameo 3 (Bluetooth)" once identified. Before that, "Bluetooth serial port".
+   - `webSerialSupported()`, `requestBluetoothCutter()` (picker filtered by service class id,
+     `allowedBluetoothServiceClassIds` set), and `reconnectBluetoothCutter()` (`navigator.serial.getPorts()`
+     filtered the same way, skipping ports whose `connected` is false).
+   - Access hints: the port isn't listed → "Pair the cutter in System Settings / bluetoothctl first,
+     then reload"; open fails → "Silhouette Studio or another app may hold the connection; turn the
+     cutter's Bluetooth off and on".
+4. **Model identification.** Web Serial gives no USB ids, so the model comes from the firmware reply.
+   Add an optional `CutterSession.open(transport, model | "identify")` path. It runs the protocol's
+   `initialize()` with a provisional Graphtec model, calls `modelForFirmware()` on the reply, and
+   fails with "Connected, but this cutter (FG reply) isn't supported" if nothing matches. Keep the
+   provisional model's use limited to reset + `FG`, and apply `withDiagnosticOverrides` after the
+   model is resolved. Test this with `FakeTransport` + `cameo3Responder`.
+5. **UI (`index.html` / `main.ts`).** Split Connect into **Connect USB** and **Connect Bluetooth**,
+   each shown only when its API exists (`webUsbSupported()` / `webSerialSupported()`). Disconnect
+   stays one button. `state.cutter` records which link is in use, and the status line shows it
+   (`Cameo 3 · Bluetooth · <firmware>`). The auto-reconnect on page load (`main.ts` ~1314) tries USB,
+   then Bluetooth. The "Requires Chrome or Edge on desktop" message only appears when neither API
+   exists.
+6. **Logging.** Note the transport and the port's `getInfo()` in the connect line, so a pasted log
+   shows which link was used. `LoggingTransport` needs no other changes.
+7. **Timeouts.** Watch whether Bluetooth latency hurts the 50 ms status poll or the 5 s status timeout.
+   If the spike shows slow replies, add a per-transport `latencyHintMs` rather than raising the USB
+   timeouts.
+8. **Docs.**
+   - `docs/cutter-setup.md` gets a "Bluetooth (macOS / Linux)" section: pair in the OS, click Connect
+     Bluetooth, and a troubleshooting note for Silhouette Studio holding the link.
+   - The Windows paragraph's "Bluetooth support (planned) won't have this problem" is reworded,
+     because Windows isn't a target.
+   - `CLAUDE.md`'s cutter-stack bullet gets `webSerialTransport.ts`, and `transport.ts`'s header
+     comment is updated.
+
+### 12d. Tests
+
+- `webSerialTransport.test.ts`: a fake `SerialPort` backed by an in-memory `ReadableStream` /
+  `WritableStream`. Check chunked writes, reads across chunk boundaries, `drain()`, a stream error
+  becoming `TransportClosedError`, and that `close()` is idempotent.
+- `models.test.ts`: `modelForFirmware` and the service-class filters.
+- `session.test.ts`: the identify-by-firmware path, for both a supported and an unsupported reply.
+- The golden test in `graphtec.test.ts` doesn't change: command output is transport-independent.
+
+### 12e. Hardware acceptance (Cameo 3, macOS then Linux)
+
+1. Pair, then Connect Bluetooth: the status line shows the firmware; reloading the page reconnects
+   without a picker.
+2. Calibration cut, then a dry run of a multi-sticker sheet: every outline is traced, and no moves
+   are dropped.
+3. A real print-and-cut on sticker paper at the tuned 1/1 settings: marks are found and cuts line up
+   with the USB result.
+4. Pause and resume from the cutter's screen, and Abort from the app.
+5. Turn the cutter off mid-idle: a clear "lost connection" error, and Connect works again after
+   power-on.
+6. Copy log: compare packet timings with a USB run of the same sheet.
+
+**Open questions:** the RFCOMM service class id and the macOS port path (§12a items 1–2, which
+decide the filters and reconnect), and whether a smaller write chunk is needed (item 5).
+
+### 12f. As built
+
+The build went ahead before the §12a spike, so every open answer can be overridden or is recorded:
+- **Service class id** defaults to SPP (`SERIAL_PORT_PROFILE_UUID` in `models.ts`). `?btService=<uuid>`
+  asks for another one, and `?btAnyPort=1` opens the picker unfiltered (for a macOS `/dev/cu.*` port).
+  The connect log line records which kind of port was opened (`describePort`).
+- **Model identification** (`CutterSession.openAndIdentify`, `modelForBluetoothFirmware`): the
+  handshake runs with the Cameo 3 as a provisional model, then the FG reply picks the real one by
+  prefix (`CAMEO3` / `CAMEO 3`). The fake device answers `CAMEO V1.10`, so the Cameo 3's real reply may
+  not name the model. When nothing matches and only one model has Bluetooth, that model is assumed,
+  and the log says so. Tighten this once a real Bluetooth FG reply is known.
+- **Write chunk** stays at 4096 bytes (`WRITE_CHUNK_BYTES` in `webSerialTransport.ts`); lower it if
+  §12a item 5 finds dropped bytes.
+- **UI:** Connect became **Connect USB** plus **Connect Bluetooth** (each shown only if its API
+  exists); the one Disconnect button covers both. The status line shows the link. There's no
+  auto-connect on page load, same as USB; Connect Bluetooth reuses a granted port without a picker.
+- **Disconnects:** the port's `disconnect` event aborts the job and shows "Lost the Bluetooth
+  connection"; stream errors also fail pending reads with `TransportClosedError`.
+- **Tests:** `webSerialTransport.test.ts` covers chunked writes, reads, drain, link loss, close order,
+  and firmware identification (a supported reply, a guessed one, and an unsupported one).
+- §12e hardware acceptance is still to do. Fill in §12b from the first Bluetooth connect's
+  **Copy log**.
+
+### 12g. First hardware try: BLE, not RFCOMM
+
+On a Cameo 3 paired with macOS, the SPP-filtered Web Serial picker found nothing. macOS did create
+`/dev/cu.CAMEO3-30411C`, but the cutter stayed silent on it, even to `ESC ENQ` / `FG` sent straight
+from a terminal with Chrome out of the way, USB unplugged and Silhouette Studio closed. macOS lists
+the cutter's services as `GATT ACL`, with no serial port. So **Connect Bluetooth now uses Web
+Bluetooth** (`webBluetoothTransport.ts`), following upstream's `BLETransport.py`:
+- vendor service `e2088282-…`: write `6d92661d-…`, reply notifications `8dcf199a-…`, and movement
+  notifications `61490654-…`, which are subscribed but kept out of the reply stream;
+- init handshake `ESC EOT` written to all three characteristics, then 1 s to settle;
+- 20-byte acknowledged writes, with up to 3 retries while the cutter reports busy.
+
+Chrome's picker filters on the service or a `CAMEO`/`PORTRAIT`/`CURIO` name prefix. Connecting
+worked once the cutter was paired with macOS and woken from sleep; an asleep cutter neither appears
+nor answers. The docs and panel tell users to pair first. The advertised name (`CAMEO3-…`) also identifies
+the model when the FG reply doesn't. The Web Serial path stays, behind `?btSerial=1`. A failed
+connect now leaves **Copy log** usable (`OpenOptions.onLog`).
+
+Not yet confirmed: whether the Cameo 3 exposes this service at all (upstream verified it on the
+Cameo 4/5), and how long a sheet takes to send at 20 bytes per acknowledged write.

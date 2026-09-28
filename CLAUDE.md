@@ -47,13 +47,16 @@ panel. `index.html` holds the static DOM that `main.ts` looks up by id.
 
 **Cutter stack (`src/lib/cutter/`)** is layered so that new models and manufacturers are mostly
 data:
-- `transport.ts` + `webUsbTransport.ts` are a byte pipe. WebUSB `transferIn` can't be cancelled,
+- `transport.ts` + `webUsbTransport.ts` / `webBluetoothTransport.ts` (BLE vendor GATT service, the
+  default for Bluetooth) / `webSerialTransport.ts` (Bluetooth Classic RFCOMM, `?btSerial=1`) are a
+  byte pipe. WebUSB `transferIn` can't be cancelled,
   so one read loop feeds a `ByteQueue`. `LoggingTransport` records traffic for the in-app
   **Copy log** button.
 - `protocol.ts` defines the interface. `graphtec.ts` implements Silhouette GPGL as pure command
   builders plus a `GraphtecProtocol` class. It is modelled on inkscape-silhouette's `Graphtec.py`
   (studied, not vendored). Device coordinates are 20 steps/mm with the X and Y axes swapped.
-- `models.ts` is the device registry (USB ids, bed/mat size, mark-search quirks), and
+- `models.ts` is the device registry (USB ids, Bluetooth service + firmware prefix, bed/mat size,
+  mark-search quirks), and
   `materials.ts` holds cut presets. `paperTypes.ts` maps each UI paper type to a cut material.
 - `job.ts` turns sheet items into closed, ordered, overcut polylines. `layoutJob()` maps sheet mm
   to device mm (relative to the marks when marks are on).
@@ -97,6 +100,9 @@ These are read in `main.ts` and documented in `docs/cutter-setup.md`:
 - `?homeCmd=…` sets the home command.
 - `?scanOffset=N` sets the scan start offset in mm.
 - `?scanSteps=0,2,4` sets the scan retry positions.
+- `?btSerial=1` makes Connect Bluetooth use Web Serial (Classic RFCOMM) instead of BLE.
+- `?btService=<uuid>` sets the RFCOMM service class the Web Serial picker asks for.
+- `?btAnyPort=1` makes the Bluetooth picker list every serial port.
 
 ## Styling notes
 
