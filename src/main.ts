@@ -8,6 +8,7 @@ import { downloadSvgString } from "./lib/download";
 import { printSvg } from "./lib/print";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
+import { isSupportedBrowser, showUnsupportedBrowserAlert } from "./lib/browserCheck";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
 import { buildCalibrationSVG, calibrationPaths } from "./lib/cutter/calibration";
 import { buildCutPaths, CutJobError, layoutJob, testSquarePaths } from "./lib/cutter/job";
@@ -1396,3 +1397,4 @@ if (webSerialSupported()) {
 
 // ---- initial render ----
 render();
+if (!isSupportedBrowser()) showUnsupportedBrowserAlert();
