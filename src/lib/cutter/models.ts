@@ -99,6 +99,8 @@ export const CUTTER_MODELS: CutterModel[] = [
     protocol: "graphtec-gpgl",
     gpglVariant: "cameo4",
     usb: { vendorId: 0x0b4d, productId: 0x1137 },
+    // Upstream matches "CAMEO 4", over the same service as the Cameo 3; unconfirmed on hardware here.
+    bluetooth: { rfcommServiceClassId: SERIAL_PORT_PROFILE_UUID, firmwarePrefixes: ["CAMEO4", "CAMEO 4"] },
     bedWidthMm: 304.8,
     maxLengthMm: 3000,
     marginLeftMm: 0,
@@ -142,8 +144,8 @@ export function provisionalBluetoothModel(): CutterModel | undefined {
 
 /**
  * Picks the model for a Bluetooth connection from its FG reply, then from the advertised device
- * name. If neither matches but only one known model has Bluetooth, that one is assumed (`guessed`):
- * the reply may not name the model (over USB a Cameo 3 has been seen to answer just "CAMEO V1.10").
+ * name. If neither matches and the reply names no model at all, the Cameo 3 (the first Bluetooth
+ * model) is assumed (`guessed`): over USB a Cameo 3 has been seen to answer just "CAMEO V1.10".
  */
 export function modelForBluetoothFirmware(firmware: string, deviceName = ""): { model: CutterModel; guessed: boolean } | undefined {
   const bt = CUTTER_MODELS.filter((m) => m.bluetooth);
@@ -152,5 +154,5 @@ export function modelForBluetoothFirmware(firmware: string, deviceName = ""): { 
     const match = t && bt.find((m) => m.bluetooth!.firmwarePrefixes.some((p) => t.startsWith(p.toUpperCase())));
     if (match) return { model: match, guessed: false };
   }
-  return bt.length === 1 ? { model: bt[0], guessed: true } : undefined;
+  return bt.length > 0 && /^CAMEO V\d/i.test(firmware.trim()) ? { model: bt[0], guessed: true } : undefined;
 }

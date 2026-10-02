@@ -1051,7 +1051,7 @@ function renderCutter() {
         : "Load the mat before sending a job."
       : link === "usb"
         ? "Plug the Cameo in and turn it on. Silhouette Cameo 3 or 4 · Requires Chrome or Edge."
-        : "Pair the cutter in your computer's Bluetooth settings first, and wake it if it's asleep. Silhouette Cameo 3 · Requires Chrome or Edge.";
+        : "Pair the cutter in your computer's Bluetooth settings first, and wake it if it's asleep. Silhouette Cameo 3 or 4 · Requires Chrome or Edge.";
 
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
   else if (c.connecting) cutterStatusEl.textContent = "Connecting…";

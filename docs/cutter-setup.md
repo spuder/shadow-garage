@@ -1,6 +1,6 @@
 # Cutting directly from the browser
 
-Shadow Garage can send a sheet straight to a **Silhouette Cameo 3** over USB or Bluetooth, or a **Cameo 4** over USB — no
+Shadow Garage can send a sheet straight to a **Silhouette Cameo 3 or 4** over USB or Bluetooth — no
 Silhouette Studio needed. It uses WebUSB and Web Serial, so it needs **Chrome or Edge on desktop**
 (Chrome 117 or newer for Bluetooth; Firefox and Safari implement neither). The page must be served over HTTPS or from `localhost`. Locally, `npm run dev -- --port 5183` serves it at
 `http://localhost:5183/shadow-garage/` (the path matches the GitHub Pages deployment).
@@ -49,7 +49,7 @@ roll the driver back in Device Manager. Bluetooth isn't tested on Windows either
 
 ## Bluetooth (macOS and Linux)
 
-The Cameo 3 can also be driven over Bluetooth. This is new and not yet confirmed on hardware; USB
+The Cameo 3 and 4 can also be driven over Bluetooth. This is new and not yet confirmed on hardware; USB
 is the proven path.
 
 1. Unplug the USB cable, quit Silhouette Studio, and turn on the cutter's Bluetooth.
@@ -178,7 +178,7 @@ taps still drift, send the log from two back-to-back test cuts.
 - The sticker-paper pressure, speed and blade depth (`src/lib/cutter/materials.ts`) are
   inkscape-silhouette's defaults and still need tuning for a clean kiss cut.
 - Letter and A4 sheets only — A3 doesn't fit on the 12×12 mat.
-- **Bluetooth** is for the Cameo 3 only, and not yet confirmed on hardware. Other models would need
+- **Bluetooth** is for the Cameo 3 and 4, and not yet confirmed on hardware. Other models would need
   adding to `src/lib/cutter/models.ts` first.
 - **Cameo 4** commands follow inkscape-silhouette's and aren't yet confirmed on hardware. Its mark scan starts where inkscape-silhouette's does, not 3 mm lower like
   the Cameo 3's; if the first scan misses, try `?scanOffset=3`.
