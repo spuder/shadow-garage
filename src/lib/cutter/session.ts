@@ -134,7 +134,7 @@ export class CutterSession {
     const log = new LoggingTransport(transport);
     onLog?.(log);
     const describe = (m: CutterModel) =>
-      `${m.manufacturer} ${m.name} via ${transport.label}; mark search args ${m.regmarkArgOrder}; scan offset ${m.regmarkScanOffsetMm} mm; home ${m.homeCommand ?? "none"}`;
+      `${m.manufacturer} ${m.name} via ${transport.label}; mark search args ${m.regmarkArgOrder}; scan offset ${m.regmarkScanOffsetMm} mm; scan margin ${m.regmarkSearchMarginMm} mm; home ${m.homeCommand ?? "none"}`;
     log.note(`connect: ${describe(first)}`);
     try {
       const { firmware } = await protocolFor(first, log).initialize();

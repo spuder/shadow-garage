@@ -1186,6 +1186,7 @@ async function disconnectCutter() {
  * ?homeCmd=TT|H|none picks the command that homes the carriage before a job.
  */
 // ?scanOffset=<mm> starts the mark search further down the sheet (regmarkScanOffsetMm);
+// ?scanMargin=<mm> starts it this far up and left of the top-left mark (regmarkSearchMarginMm);
 // ?scanSteps=0,3,5,7 sets the retry positions (regmarkSearchStepsMm).
 function withDiagnosticOverrides(model: CutterModel): CutterModel {
   const params = new URLSearchParams(location.search);
@@ -1194,6 +1195,8 @@ function withDiagnosticOverrides(model: CutterModel): CutterModel {
   if (order === "width_height" || order === "height_width") out.regmarkArgOrder = order;
   const scanOffset = Number(params.get("scanOffset"));
   if (params.has("scanOffset") && Number.isFinite(scanOffset)) out.regmarkScanOffsetMm = scanOffset;
+  const scanMargin = Number(params.get("scanMargin"));
+  if (params.has("scanMargin") && Number.isFinite(scanMargin)) out.regmarkSearchMarginMm = scanMargin;
   const steps = params.get("scanSteps")?.split(",").map(Number);
   if (steps && steps.length > 0 && steps.every(Number.isFinite)) out.regmarkSearchStepsMm = steps;
   const home = params.get("homeCmd");

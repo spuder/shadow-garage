@@ -72,6 +72,11 @@ describe("Cameo 3 command sequences", () => {
     expect(regmarkCommands(regmarks!)).toEqual(["TB50,0", "TB99", "TB52,2", "TB51,400", "TB53,10", "TB55,1", "TB123,5188,3918,0,0"]);
   });
 
+  it("can start the search at the top-left mark itself", () => {
+    const { regmarks } = layoutJob(letter, cameo3, "standard");
+    expect(regmarkCommands(regmarks!, "height_width", 0, 0).at(-1)).toBe("TB123,5188,3918,200,200");
+  });
+
   it("can send the mark distances width-first", () => {
     const { regmarks } = layoutJob(letter, cameo3, "standard");
     expect(regmarkCommands(regmarks!, "width_height").at(-1)).toBe("TB123,3918,5188,0,0");

@@ -45,11 +45,10 @@ export interface CutterModel {
    * On a real Cameo 3, TT had no visible effect, so it's off until a working command is found.
    */
   homeCommand: HomeCommand;
-  /**
-   * Extra distance (mm) down the sheet at which the mark search starts, on top of upstream's
-   * "10 mm before the top-left mark". For tuning if the cutter scans too near the paper's top edge.
-   */
+  /** Extra distance (mm) down the sheet at which the mark search starts, on top of regmarkSearchMarginMm. */
   regmarkScanOffsetMm: number;
+  /** How far up and left of the top-left mark (mm) the search starts: upstream's 10. */
+  regmarkSearchMarginMm: number;
   /**
    * The mark search (TB123) is one-shot. If it fails, it's retried starting this much further down
    * the sheet (mm, relative to the first attempt), one attempt per entry.
@@ -86,6 +85,7 @@ export const CUTTER_MODELS: CutterModel[] = [
     // Tuned on hardware: from upstream's start (10 mm above the top-left mark) the first scan
     // missed and a retry 3 mm lower found the marks; starting 3 mm lower then worked first time.
     regmarkScanOffsetMm: 3,
+    regmarkSearchMarginMm: 10,
     regmarkSearchStepsMm: [0, 2, 4, 6],
     pressureRange: [1, 33],
     speedRange: [1, 10],
@@ -108,7 +108,10 @@ export const CUTTER_MODELS: CutterModel[] = [
     regmarks: "standard",
     regmarkArgOrder: "height_width",
     homeCommand: null,
-    regmarkScanOffsetMm: 0, // upstream's start; not yet tuned on hardware
+    // Replies -1 after measuring the square unless the search starts below it; 6 mm clears a
+    // 5.5 mm square (tuned on hardware), not a larger one.
+    regmarkScanOffsetMm: 6,
+    regmarkSearchMarginMm: 0,
     regmarkSearchStepsMm: [0, 2, 4, 6],
     pressureRange: [1, 33],
     speedRange: [1, 30],

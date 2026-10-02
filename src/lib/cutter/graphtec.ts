@@ -137,10 +137,9 @@ function regmarkDistances(spec: RegmarkSpec, order: RegmarkArgOrder): string {
 }
 
 /** Automatic registration-mark search (Graphtec.py plot() with regmark=True, regsearch=True). */
-export function regmarkCommands(spec: RegmarkSpec, order: RegmarkArgOrder = "height_width", scanOffsetMm = 0): string[] {
-  // Upstream starts the optical search 10mm before where the marks are expected.
-  const top = Math.max(spec.originYmm - 10, 0) + scanOffsetMm;
-  const left = Math.max(spec.originXmm - 10, 0);
+export function regmarkCommands(spec: RegmarkSpec, order: RegmarkArgOrder = "height_width", scanOffsetMm = 0, marginMm = 10): string[] {
+  const top = Math.max(spec.originYmm - marginMm, 0) + scanOffsetMm;
+  const left = Math.max(spec.originXmm - marginMm, 0);
   const search = spec.style === "four_corner" ? "TB124" : "TB123";
   return [...REGMARK_SETUP, `${search},${regmarkDistances(spec, order)},${mmToSU(top)},${mmToSU(left)}`];
 }
@@ -353,7 +352,7 @@ export class GraphtecProtocol implements CutterProtocol {
 
   async searchRegmarks(spec: RegmarkSpec, extraOffsetMm = 0): Promise<void> {
     this.drain();
-    await this.send(regmarkCommands(spec, this.model.regmarkArgOrder, this.model.regmarkScanOffsetMm + extraOffsetMm));
+    await this.send(regmarkCommands(spec, this.model.regmarkArgOrder, this.model.regmarkScanOffsetMm + extraOffsetMm, this.model.regmarkSearchMarginMm));
     await this.awaitRegistration();
   }
 

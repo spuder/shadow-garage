@@ -90,8 +90,9 @@ connection fails. Please include it in a bug report.
    "ready" even with no mat loaded, so the app can't check for you. Never send with the mat out:
    the cutter will set up and scan anyway, and the scan can run the carriage into the side.
 5. Every job resets the cutter (with the mat loaded), sets the blade, scans for the marks, then
-   cuts. The scan is one-shot on the cutter. On the Cameo 3 it starts 3 mm lower than
-   inkscape-silhouette's default (tuned on hardware), and if it misses, the app retries 2, 4 and
+   cuts. The scan is one-shot on the cutter. On a Cameo 3 it starts 3 mm lower than
+   inkscape-silhouette's default; on a Cameo 4 it starts just below the square, the only place it
+   was found to work (both tuned on hardware). If it misses, the app retries 2, 4 and
    6 mm further down before giving up. A miss leaves an error on the cutter's own screen even if a
    retry then succeeds; that's cosmetic.
 6. Between sheets: unload, put the next printed sheet on the mat, load, send.
@@ -155,8 +156,10 @@ calibration cut again. `?regmarkArgs=height_width` (the default) switches back.
 
 Homing is off by default: `TT` (from Silhouette Studio's startup sequence) did nothing on a real
 Cameo 3. `?homeCmd=H` tries GPGL's generic Home before every job and shows a **Home** button.
-`?scanOffset=5` starts every mark scan 5 mm further down the sheet, and `?scanSteps=0,2,4,6`
-changes the retry positions. Switches can be combined: `?regmarkArgs=width_height&scanOffset=5`. The log's first line shows which
+`?scanOffset=5` replaces the model's scan offset (how far down the sheet the scan starts), and
+`?scanSteps=0,2,4,6` changes the retry positions. `?scanMargin=N` starts the scan N mm up and left
+of the top-left mark: 10 is inkscape-silhouette's and the Cameo 3's, 0 the Cameo 4's.
+Switches can be combined: `?regmarkArgs=width_height&scanOffset=5`. The log's first line shows which
 settings were used.
 
 ### Diagnostics console
@@ -178,7 +181,7 @@ taps still drift, send the log from two back-to-back test cuts.
 - The sticker-paper pressure, speed and blade depth (`src/lib/cutter/materials.ts`) are
   inkscape-silhouette's defaults and still need tuning for a clean kiss cut.
 - Letter and A4 sheets only — A3 doesn't fit on the 12×12 mat.
-- **Bluetooth** is for the Cameo 3 and 4, and not yet confirmed on hardware. Other models would need
-  adding to `src/lib/cutter/models.ts` first.
-- **Cameo 4** commands follow inkscape-silhouette's and aren't yet confirmed on hardware. Its mark scan starts where inkscape-silhouette's does, not 3 mm lower like
-  the Cameo 3's; if the first scan misses, try `?scanOffset=3`.
+- **Bluetooth** is for the Cameo 3 and 4; so far only a Cameo 4 has been driven over it (Bluetooth
+  LE). Other models would need adding to `src/lib/cutter/models.ts` first.
+- **Cameo 4** commands follow inkscape-silhouette's. Print-and-cut has been dry-run on one; real
+  cuts aren't yet confirmed.

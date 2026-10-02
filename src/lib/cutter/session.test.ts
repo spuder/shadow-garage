@@ -79,7 +79,7 @@ describe("print-and-cut job", () => {
       "L0", "\\0,0", "M0,0", "J0", "FN0", "TB50,0",
     ];
     const t = new FakeTransport(cameo3Responder());
-    const session = await CutterSession.open(t, cameo4);
+    const session = await CutterSession.open(t, { ...cameo4, regmarkScanOffsetMm: 0, regmarkSearchMarginMm: 10 });
     t.writes.length = 0;
     await session.run({ ...job(true), material: { ...STICKER_PAPER, speed: 10, pressure: 20 } });
     expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
@@ -117,6 +117,13 @@ describe("print-and-cut job", () => {
     const session = await CutterSession.open(t, cameo3);
     await session.run(job(true));
     expect(t.log).toContain("TB123,5188,3918,60,0");
+  });
+
+  it("starts the Cameo 4's scan just below the square by default", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo4);
+    await session.run(job(true));
+    expect(t.log).toContain("TB123,5188,3918,320,200");
   });
 
   it("uses the model's mark-distance order and scan offset", async () => {
@@ -387,7 +394,7 @@ describe("abort, log and diagnostics", () => {
     const session = await CutterSession.open(t, cameo3);
     await session.run(job(true));
     const text = session.log.format();
-    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width; scan offset 3 mm; home none/);
+    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width; scan offset 3 mm; scan margin 10 mm; home none/);
     expect(text).toMatch(/<- CAMEO V1\.10 {4}\|/);
     expect(text).toMatch(/## job: cut, 1 paths; sheet bbox \(40\.00, 40\.00\)-\(50\.00, 50\.00\) mm; frame offset \(-10, -10\) mm; marks standard auto/);
     expect(text).toMatch(/## mark search 1\/4, starting 0 mm further down/);
