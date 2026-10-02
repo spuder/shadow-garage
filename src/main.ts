@@ -1050,7 +1050,7 @@ function renderCutter() {
         ? "The cutter is busy — wait for the job to finish before disconnecting."
         : "Load the mat before sending a job."
       : link === "usb"
-        ? "Plug the Cameo in and turn it on. Silhouette Cameo 3 · Requires Chrome or Edge."
+        ? "Plug the Cameo in and turn it on. Silhouette Cameo 3 or 4 · Requires Chrome or Edge."
         : "Pair the cutter in your computer's Bluetooth settings first, and wake it if it's asleep. Silhouette Cameo 3 · Requires Chrome or Edge.";
 
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
@@ -1062,6 +1062,7 @@ function renderCutter() {
   const m = currentCutMaterial();
   const { speed: defaultSpeed, pressure: defaultPressure } = currentPaperType().cutMaterial;
   cutterMaterialEl.textContent = `Cut settings: ${m.name}, blade ${m.autoBladeDepth} (set by Paper Type)`;
+  cutSpeedSlider.max = String(c.session?.model.speedRange[1] ?? 10);
   cutSpeedSlider.value = String(m.speed);
   cutSpeedValue.textContent = String(m.speed);
   cutSpeedDefault.textContent = m.speed === defaultSpeed ? "(Paper Type default)" : `(Paper Type default ${defaultSpeed})`;
@@ -1160,6 +1161,7 @@ async function connectCutter(link: CutterLink) {
     if (session) {
       c.session = session;
       c.manualRetryKind = null;
+      if ((state.cutSpeed ?? 0) > session.model.speedRange[1]) state.cutSpeed = null;
       cutterDialog.close();
     }
   } catch (e) {

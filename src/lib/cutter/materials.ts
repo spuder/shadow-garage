@@ -7,7 +7,7 @@ export interface CutMaterial {
   /** Silhouette media id (Graphtec.py MEDIA table). Informational on the Cameo 3, which doesn't take an FW command. */
   mediaId: number;
   pressure: number; // 1..33
-  speed: number; // 1..10 on the Cameo 3
+  speed: number; // 1..10 on the Cameo 3, 1..30 on the Cameo 4
   autoBladeDepth: number; // 0..10, set by the AutoBlade itself via TF
 }
 

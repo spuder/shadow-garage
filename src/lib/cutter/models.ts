@@ -10,11 +10,15 @@ export type RegmarkArgOrder = "height_width" | "width_height";
 
 export type ProtocolId = "graphtec-gpgl"; // future: "hpgl" (Roland, USCutter, generic USB-serial vinyl cutters)
 
+/** Which Silhouette generation's setup and init sequence the model takes (see graphtec.ts). */
+export type GpglVariant = "cameo3" | "cameo4";
+
 export interface CutterModel {
   id: string;
   manufacturer: string;
   name: string;
   protocol: ProtocolId;
+  gpglVariant: GpglVariant;
   usb?: { vendorId: number; productId: number };
   /**
    * Bluetooth: BLE via Web Bluetooth (the default), or Classic RFCOMM via Web Serial with
@@ -67,6 +71,7 @@ export const CUTTER_MODELS: CutterModel[] = [
     manufacturer: "Silhouette",
     name: "Cameo 3",
     protocol: "graphtec-gpgl",
+    gpglVariant: "cameo3",
     usb: { vendorId: 0x0b4d, productId: 0x112f },
     // The standard Serial Port Profile UUID. Upstream connects to raw RFCOMM channel 1 and never
     // looks the service up, so this is unconfirmed on hardware; ?btService=<uuid> overrides it.
@@ -87,8 +92,29 @@ export const CUTTER_MODELS: CutterModel[] = [
     toolHolders: 2,
     mat: { id: "cameo_12x12", widthMm: 304.8, heightMm: 304.8 },
   },
-  // Not yet supported — each needs its own setup-command variant in graphtec.ts and hardware testing:
-  //   Silhouette Cameo 4 (0x0b4d:0x1137), Cameo 5 (0x0b4d:0x1140), Portrait 3 (0x0b4d:0x113a), ...
+  {
+    id: "silhouette-cameo4",
+    manufacturer: "Silhouette",
+    name: "Cameo 4",
+    protocol: "graphtec-gpgl",
+    gpglVariant: "cameo4",
+    usb: { vendorId: 0x0b4d, productId: 0x1137 },
+    bedWidthMm: 304.8,
+    maxLengthMm: 3000,
+    marginLeftMm: 0,
+    marginTopMm: 0,
+    regmarks: "standard",
+    regmarkArgOrder: "height_width",
+    homeCommand: null,
+    regmarkScanOffsetMm: 0, // upstream's start; not yet tuned on hardware
+    regmarkSearchStepsMm: [0, 2, 4, 6],
+    pressureRange: [1, 33],
+    speedRange: [1, 30],
+    toolHolders: 2,
+    mat: { id: "cameo_12x12", widthMm: 304.8, heightMm: 304.8 },
+  },
+  // Not yet supported — each needs a gpglVariant (upstream drives the Cameo 5 like a Cameo 4) and hardware testing:
+  //   Silhouette Cameo 5 (0x0b4d:0x1140), Portrait 3 (0x0b4d:0x113a), ...
 ];
 
 export function modelById(id: string): CutterModel | undefined {

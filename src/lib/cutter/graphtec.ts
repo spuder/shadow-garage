@@ -1,9 +1,9 @@
 // Graphtec GPGL command language, as spoken by Silhouette cutters.
 //
 // Reverse-engineered from fablabnbg/inkscape-silhouette's Graphtec.py (GPL-2.0 — studied for the
-// protocol, not vendored). Only the Cameo 3 command variant is implemented; other Silhouette
-// generations send slightly different setup sequences (see Graphtec.py's setup()) and need their
-// own branch here plus hardware testing before being added to models.ts.
+// protocol, not vendored). The Cameo 3 and 4 command variants are implemented; other Silhouette
+// generations reuse one of them (upstream drives the Cameo 5 like a Cameo 4) or need their own
+// branch here (see Graphtec.py's setup()), plus hardware testing before being added to models.ts.
 //
 // Wire format: ASCII commands, each terminated by ETX (0x03); a few control codes are sent as
 // ESC + byte. Coordinates are "Silhouette units" (20 per mm) with the axes swapped relative to
@@ -30,6 +30,7 @@ const ETX = 0x03;
 const ESC = 0x1b;
 const EOT = 0x04; // ESC EOT: initialize / reset the device
 const ENQ = 0x05; // ESC ENQ: status query
+const NAK = 0x15; // ESC NAK: tool setup query (Cameo 4)
 
 const SU_PER_MM = 20;
 const TOOL_HOLDER = 1; // the AutoBlade only works in tool holder 1
@@ -70,21 +71,33 @@ export function escapeCommand(code: number): Uint8Array {
   return new Uint8Array([ESC, code]);
 }
 
-/** Mat, tool, speed, pressure, blade offset and AutoBlade depth — Graphtec.py's set_cutting_mat() + setup() for a Cameo 3. */
+/** Mat, tool, speed, pressure, blade offset and AutoBlade depth — Graphtec.py's set_cutting_mat() + setup() for a Cameo 3 or 4. */
 export function setupCommands(model: CutterModel, material: CutMaterial): string[] {
   const t = TOOL_HOLDER;
-  const matCode = MAT_CODES[model.mat.id] ?? "0";
   const speed = clamp(material.speed, model.speedRange);
   const pressure = clamp(material.pressure, model.pressureRange);
   const depth = clamp(material.autoBladeDepth, [0, 10]);
   // Corner-sharpening parameters, as upstream derives them from its 0.1mm defaults.
   const sharpen = Math.trunc((0.1 + 0.05) * 10);
+  if (model.gpglVariant === "cameo4") {
+    return [
+      ...matCommands(model),
+      `J${t}`,
+      `FX${pressure},${t}`,
+      "TJ0", // acceleration
+      `!${speed},${t}`,
+      `FC${mmToSU(0)},${mmToSU(0.05)},${t}`,
+      `FE0,${t}`,
+      `FF${sharpen},0,${t}`,
+      `FF${sharpen},${sharpen},${t}`,
+      `FX${pressure},${t}`, // sent twice, as Silhouette Studio does
+      "TJ3",
+      `FC${mmToSU(BLADE_DIAMETER_MM)},${mmToSU(0.05)},${t}`,
+      `TF${depth},${t}`,
+    ];
+  }
   return [
-    `TG${matCode}`,
-    "FN0",
-    "TB50,0", // portrait: upstream swaps x/y itself rather than using landscape mode, which mis-compensates the blade-alignment tick
-    `\\0,0`,
-    `Z${mmToSU(model.mat.heightMm)},${mmToSU(model.mat.widthMm)}`,
+    ...matCommands(model),
     `J${t}`,
     `!${speed},${t}`,
     `FX${pressure},${t}`,
@@ -94,6 +107,16 @@ export function setupCommands(model: CutterModel, material: CutMaterial): string
     `FC${mmToSU(0)},${mmToSU(0.05)},${t}`,
     `FC${mmToSU(BLADE_DIAMETER_MM)},${mmToSU(0.05)},${t}`,
     `TF${depth},${t}`, // the AutoBlade sets its own depth from this
+  ];
+}
+
+function matCommands(model: CutterModel): string[] {
+  return [
+    `TG${MAT_CODES[model.mat.id] ?? "0"}`,
+    "FN0",
+    "TB50,0", // portrait: upstream swaps x/y itself rather than using landscape mode, which mis-compensates the blade-alignment tick
+    `\\0,0`,
+    `Z${mmToSU(model.mat.heightMm)},${mmToSU(model.mat.widthMm)}`,
   ];
 }
 
@@ -255,6 +278,7 @@ export class GraphtecProtocol implements CutterProtocol {
     // Calibration queries Silhouette Studio sends to a Cameo 3 at startup. Their replies aren't
     // used; they're sent so the device sees the same init sequence it's known to work with.
     for (const q of ["TB71", "FA", "TC"]) {
+      if (q === "TC" && this.model.gpglVariant === "cameo4") continue; // Silhouette Studio doesn't send it to a Cameo 4
       try {
         await this.query(q, 1000);
       } catch (e) {
@@ -301,7 +325,19 @@ export class GraphtecProtocol implements CutterProtocol {
   }
 
   async setup(material: CutMaterial): Promise<void> {
-    await this.send(setupCommands(this.model, material));
+    const cmds = setupCommands(this.model, material);
+    if (this.model.gpglVariant !== "cameo4") return this.send(cmds);
+    // Upstream's tool setup query sits between the mat and tool commands; the reply isn't used.
+    const matLength = matCommands(this.model).length;
+    await this.send(cmds.slice(0, matLength));
+    this.drain();
+    await this.transport.write(escapeCommand(NAK));
+    try {
+      await this.readReply(1000);
+    } catch (e) {
+      if (!(e instanceof TransportTimeoutError)) throw e;
+    }
+    await this.send(cmds.slice(matLength));
   }
 
   private async awaitRegistration(): Promise<void> {

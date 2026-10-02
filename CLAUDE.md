@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Shadow Garage is a browser-only app (vanilla TypeScript + Vite, no framework, no backend) that
 turns images into print-and-cut sticker sheets. It traces a die-cut outline, packs stickers onto
 a sheet with Silhouette-style registration marks, prints or exports SVG, and can drive a
-Silhouette Cameo 3 directly over WebUSB. It's deployed to GitHub Pages at
+Silhouette Cameo 3 or 4 directly over WebUSB. It's deployed to GitHub Pages at
 `https://spuder.github.io/shadow-garage/` on every push to `master` (`.github/workflows/deploy.yml`).
 
 ## Commands
@@ -88,9 +88,9 @@ hardware evidence:
 
 - `fakeTransport.ts` provides `FakeTransport` and `cameo3Responder`, a scripted device used by the
   session tests.
-- `graphtec.test.ts` includes a golden test that compares the full command stream with
-  inkscape-silhouette's dry-run transcript. If you change command output, keep that test passing
-  or update it deliberately.
+- `graphtec.test.ts` includes golden tests (Cameo 3 and 4) that compare the full command stream with
+  inkscape-silhouette's dry-run transcript. If you change command output, keep them passing or
+  update them deliberately.
 
 ## Diagnostic URL switches
 
