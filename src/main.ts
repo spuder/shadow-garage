@@ -1050,8 +1050,8 @@ function renderCutter() {
         ? "The cutter is busy — wait for the job to finish before disconnecting."
         : "Load the mat before sending a job."
       : link === "usb"
-        ? "Plug the Cameo in and turn it on. Silhouette Cameo 3 · Requires Chrome or Edge."
-        : "Pair the cutter in your computer's Bluetooth settings first, and wake it if it's asleep. Silhouette Cameo 3 · Requires Chrome or Edge.";
+        ? "Plug the Cameo in and turn it on. Silhouette Cameo 3 or 4 · Requires Chrome or Edge."
+        : "Pair the cutter in your computer's Bluetooth settings first, and wake it if it's asleep. Silhouette Cameo 3 or 4 · Requires Chrome or Edge.";
 
   if (!supported) cutterStatusEl.textContent = "Requires Chrome or Edge on desktop";
   else if (c.connecting) cutterStatusEl.textContent = "Connecting…";
@@ -1062,6 +1062,7 @@ function renderCutter() {
   const m = currentCutMaterial();
   const { speed: defaultSpeed, pressure: defaultPressure } = currentPaperType().cutMaterial;
   cutterMaterialEl.textContent = `Cut settings: ${m.name}, blade ${m.autoBladeDepth} (set by Paper Type)`;
+  cutSpeedSlider.max = String(c.session?.model.speedRange[1] ?? 10);
   cutSpeedSlider.value = String(m.speed);
   cutSpeedValue.textContent = String(m.speed);
   cutSpeedDefault.textContent = m.speed === defaultSpeed ? "(Paper Type default)" : `(Paper Type default ${defaultSpeed})`;
@@ -1160,6 +1161,7 @@ async function connectCutter(link: CutterLink) {
     if (session) {
       c.session = session;
       c.manualRetryKind = null;
+      if ((state.cutSpeed ?? 0) > session.model.speedRange[1]) state.cutSpeed = null;
       cutterDialog.close();
     }
   } catch (e) {
@@ -1184,6 +1186,7 @@ async function disconnectCutter() {
  * ?homeCmd=TT|H|none picks the command that homes the carriage before a job.
  */
 // ?scanOffset=<mm> starts the mark search further down the sheet (regmarkScanOffsetMm);
+// ?scanMargin=<mm> starts it this far up and left of the top-left mark (regmarkSearchMarginMm);
 // ?scanSteps=0,3,5,7 sets the retry positions (regmarkSearchStepsMm).
 function withDiagnosticOverrides(model: CutterModel): CutterModel {
   const params = new URLSearchParams(location.search);
@@ -1192,6 +1195,8 @@ function withDiagnosticOverrides(model: CutterModel): CutterModel {
   if (order === "width_height" || order === "height_width") out.regmarkArgOrder = order;
   const scanOffset = Number(params.get("scanOffset"));
   if (params.has("scanOffset") && Number.isFinite(scanOffset)) out.regmarkScanOffsetMm = scanOffset;
+  const scanMargin = Number(params.get("scanMargin"));
+  if (params.has("scanMargin") && Number.isFinite(scanMargin)) out.regmarkSearchMarginMm = scanMargin;
   const steps = params.get("scanSteps")?.split(",").map(Number);
   if (steps && steps.length > 0 && steps.every(Number.isFinite)) out.regmarkSearchStepsMm = steps;
   const home = params.get("homeCmd");

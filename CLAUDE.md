@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Shadow Garage is a browser-only app (vanilla TypeScript + Vite, no framework, no backend) that
 turns images into print-and-cut sticker sheets. It traces a die-cut outline, packs stickers onto
 a sheet with Silhouette-style registration marks, prints or exports SVG, and can drive a
-Silhouette Cameo 3 directly over WebUSB. It's deployed to GitHub Pages at
+Silhouette Cameo 3 or 4 directly over WebUSB. It's deployed to GitHub Pages at
 `https://spuder.github.io/shadow-garage/` on every push to `master` (`.github/workflows/deploy.yml`).
 
 ## Commands
@@ -75,7 +75,9 @@ hardware evidence:
 - The firmware silently drops long runs of back-to-back blade-up moves in one packet, so dry run
   sends one move per write and waits between moves.
 - The mark scan is one-shot on the device, so the app retries it from offset positions
-  (`regmarkScanOffsetMm`, `regmarkSearchStepsMm`).
+  (`regmarkScanOffsetMm`, `regmarkSearchStepsMm`). Where it starts matters per model: started 10 mm
+  above the square or on it, a Cameo 4 finds and measures the square but then fails (`-1`); just
+  below it (`regmarkSearchMarginMm` 0, offset 6) works.
 - High speeds bind the carriage and cause layer shifts, so material speeds are deliberately low.
 - Status `3` means paused from the cutter's own screen. `waitForReady` only times out after
   `timeoutMs` with no progress (moving or paused resets it); one packet of a slow cut can take
@@ -88,9 +90,9 @@ hardware evidence:
 
 - `fakeTransport.ts` provides `FakeTransport` and `cameo3Responder`, a scripted device used by the
   session tests.
-- `graphtec.test.ts` includes a golden test that compares the full command stream with
-  inkscape-silhouette's dry-run transcript. If you change command output, keep that test passing
-  or update it deliberately.
+- `graphtec.test.ts` includes golden tests (Cameo 3 and 4) that compare the full command stream with
+  inkscape-silhouette's dry-run transcript. If you change command output, keep them passing or
+  update them deliberately.
 
 ## Diagnostic URL switches
 
@@ -99,6 +101,7 @@ These are read in `main.ts` and documented in `docs/cutter-setup.md`:
 - `?regmarkArgs=width_height|height_width` sets the mark-search argument order.
 - `?homeCmd=…` sets the home command.
 - `?scanOffset=N` sets the scan start offset in mm.
+- `?scanMargin=N` sets how far up and left of the top-left mark the scan starts, in mm.
 - `?scanSteps=0,2,4` sets the scan retry positions.
 - `?btSerial=1` makes Connect Bluetooth use Web Serial (Classic RFCOMM) instead of BLE.
 - `?btService=<uuid>` sets the RFCOMM service class the Web Serial picker asks for.

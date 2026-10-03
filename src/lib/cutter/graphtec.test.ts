@@ -8,6 +8,7 @@ import { modelById } from "./models";
 import { CutOutOfBoundsError, CutterNotReadyError, type CutFrame, type CutterStatus } from "./protocol";
 
 const cameo3 = modelById("silhouette-cameo3")!;
+const cameo4 = modelById("silhouette-cameo4")!;
 const letter = SHEET_SIZES.find((s) => s.name === "Letter")!;
 const noOffset: CutFrame = { offsetXmm: 0, offsetYmm: 0, clip: { minX: 0, minY: 0, maxX: 100, maxY: 100 } };
 
@@ -71,6 +72,11 @@ describe("Cameo 3 command sequences", () => {
     expect(regmarkCommands(regmarks!)).toEqual(["TB50,0", "TB99", "TB52,2", "TB51,400", "TB53,10", "TB55,1", "TB123,5188,3918,0,0"]);
   });
 
+  it("can start the search at the top-left mark itself", () => {
+    const { regmarks } = layoutJob(letter, cameo3, "standard");
+    expect(regmarkCommands(regmarks!, "height_width", 0, 0).at(-1)).toBe("TB123,5188,3918,200,200");
+  });
+
   it("can send the mark distances width-first", () => {
     const { regmarks } = layoutJob(letter, cameo3, "standard");
     expect(regmarkCommands(regmarks!, "width_height").at(-1)).toBe("TB123,3918,5188,0,0");
@@ -105,6 +111,46 @@ describe("Cameo 3 command sequences", () => {
     expect(parseStatus("2")).toBe("unloaded");
     expect(parseStatus("3")).toBe("paused");
     expect(parseStatus("???")).toBe("unknown");
+  });
+});
+
+describe("Cameo 4 command sequences", () => {
+  it("sets up in Silhouette Studio's Cameo 4 order, with force sent twice around the acceleration", () => {
+    expect(setupCommands(cameo4, STICKER_PAPER)).toEqual([
+      "TG1",
+      "FN0",
+      "TB50,0",
+      "\\0,0",
+      "Z6096,6096",
+      "J1",
+      "FX1,1",
+      "TJ0",
+      "!1,1",
+      "FC0,1,1",
+      "FE0,1",
+      "FF1,0,1",
+      "FF1,1,1",
+      "FX1,1",
+      "TJ3",
+      "FC18,1,1",
+      "TF1,1",
+    ]);
+  });
+
+  it("clamps speed to the Cameo 4's 1..30", () => {
+    expect(setupCommands(cameo4, { ...STICKER_PAPER, speed: 25 })).toContain("!25,1");
+    expect(setupCommands(cameo4, { ...STICKER_PAPER, speed: 99 })).toContain("!30,1");
+  });
+
+  it("carries on with setup when the tool setup query goes unanswered", async () => {
+    vi.useFakeTimers();
+    const cutter = cameo3Responder();
+    const t = new FakeTransport((written) => (written === "\x1b\x15" ? null : cutter(written)));
+    const setup = new GraphtecProtocol(t, cameo4).setup(STICKER_PAPER);
+    await vi.advanceTimersByTimeAsync(1000);
+    await setup;
+    vi.useRealTimers();
+    expect(t.log.at(-1)).toBe("TF1,1");
   });
 });
 

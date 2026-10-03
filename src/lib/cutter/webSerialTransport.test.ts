@@ -87,12 +87,15 @@ describe("Bluetooth model identification", () => {
     expect(bluetoothServiceClassIds()).toEqual([SERIAL_PORT_PROFILE_UUID]);
   });
 
-  it("matches the firmware prefix, and otherwise assumes the only Bluetooth model", () => {
+  it("matches the firmware prefix, and assumes the Cameo 3 when the reply names no model", () => {
     expect(modelForBluetoothFirmware("CAMEO3 V1.40")).toMatchObject({ model: { id: "silhouette-cameo3" }, guessed: false });
     expect(modelForBluetoothFirmware("cameo 3 v1.40")?.guessed).toBe(false);
+    expect(modelForBluetoothFirmware("CAMEO 4 V1.10")).toMatchObject({ model: { id: "silhouette-cameo4" }, guessed: false });
     expect(modelForBluetoothFirmware("CAMEO V1.10")).toMatchObject({ model: { id: "silhouette-cameo3" }, guessed: true });
+    expect(modelForBluetoothFirmware("CAMEO 5 V1.00")).toBeUndefined();
     // The advertised BLE name names the model when the firmware reply doesn't.
     expect(modelForBluetoothFirmware("CAMEO V1.10", "CAMEO3-30411C")?.guessed).toBe(false);
+    expect(modelForBluetoothFirmware("CAMEO V1.10", "CAMEO 4")).toMatchObject({ model: { id: "silhouette-cameo4" }, guessed: false });
   });
 
   it("notes a guessed model in the log", () => {

@@ -8,6 +8,7 @@ import { CutterCancelledError, RegmarkNotFoundError } from "./protocol";
 import { CutterSession, type CutJob, type CutPhase } from "./session";
 
 const cameo3 = modelById("silhouette-cameo3")!;
+const cameo4 = modelById("silhouette-cameo4")!;
 const letter = SHEET_SIZES.find((s) => s.name === "Letter")!;
 const NOT_FOUND = "    1\x03";
 const FOUND = "    0\x03";
@@ -66,6 +67,24 @@ describe("print-and-cut job", () => {
     expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
   });
 
+  it("sends a Cameo 4 exactly what one inkscape-silhouette run sends", async () => {
+    // The same upstream run as above with force_hardware='Silhouette_Cameo4'. Upstream's dry run
+    // gets no answer to the tool setup query (ESC NAK); an AutoBlade answer, as here, sends the same.
+    const upstream = [
+      "<ESC EOT>", "FG", "TB71", "FA",
+      "TG1", "FN0", "TB50,0", "\\0,0", "Z6096,6096", "<ESC NAK>",
+      "J1", "FX20,1", "TJ0", "!10,1", "FC0,1,1", "FE0,1", "FF1,0,1", "FF1,1,1", "FX20,1", "TJ3", "FC18,1,1", "TF1,1",
+      "TB50,0", "TB99", "TB52,2", "TB51,400", "TB53,10", "TB55,1", "TB123,5188,3918,0,0",
+      "M600,600", "D600,800", "D800,800", "D800,600", "D600,600",
+      "L0", "\\0,0", "M0,0", "J0", "FN0", "TB50,0",
+    ];
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, { ...cameo4, regmarkScanOffsetMm: 0, regmarkSearchMarginMm: 10 });
+    t.writes.length = 0;
+    await session.run({ ...job(true), material: { ...STICKER_PAPER, speed: 10, pressure: 20 } });
+    expect(t.log.filter((c) => c !== "<ESC ENQ>")).toEqual(upstream);
+  });
+
   it("checks the mat, resets with it loaded, then sets up, scans, cuts and parks", async () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);
@@ -98,6 +117,13 @@ describe("print-and-cut job", () => {
     const session = await CutterSession.open(t, cameo3);
     await session.run(job(true));
     expect(t.log).toContain("TB123,5188,3918,60,0");
+  });
+
+  it("starts the Cameo 4's scan just below the square by default", async () => {
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo4);
+    await session.run(job(true));
+    expect(t.log).toContain("TB123,5188,3918,320,200");
   });
 
   it("uses the model's mark-distance order and scan offset", async () => {
@@ -368,7 +394,7 @@ describe("abort, log and diagnostics", () => {
     const session = await CutterSession.open(t, cameo3);
     await session.run(job(true));
     const text = session.log.format();
-    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width; scan offset 3 mm; home none/);
+    expect(text).toMatch(/## connect: Silhouette Cameo 3 via fake cutter; mark search args height_width; scan offset 3 mm; scan margin 10 mm; home none/);
     expect(text).toMatch(/<- CAMEO V1\.10 {4}\|/);
     expect(text).toMatch(/## job: cut, 1 paths; sheet bbox \(40\.00, 40\.00\)-\(50\.00, 50\.00\) mm; frame offset \(-10, -10\) mm; marks standard auto/);
     expect(text).toMatch(/## mark search 1\/4, starting 0 mm further down/);

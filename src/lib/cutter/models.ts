@@ -10,11 +10,15 @@ export type RegmarkArgOrder = "height_width" | "width_height";
 
 export type ProtocolId = "graphtec-gpgl"; // future: "hpgl" (Roland, USCutter, generic USB-serial vinyl cutters)
 
+/** Which Silhouette generation's setup and init sequence the model takes (see graphtec.ts). */
+export type GpglVariant = "cameo3" | "cameo4";
+
 export interface CutterModel {
   id: string;
   manufacturer: string;
   name: string;
   protocol: ProtocolId;
+  gpglVariant: GpglVariant;
   usb?: { vendorId: number; productId: number };
   /**
    * Bluetooth: BLE via Web Bluetooth (the default), or Classic RFCOMM via Web Serial with
@@ -41,11 +45,10 @@ export interface CutterModel {
    * On a real Cameo 3, TT had no visible effect, so it's off until a working command is found.
    */
   homeCommand: HomeCommand;
-  /**
-   * Extra distance (mm) down the sheet at which the mark search starts, on top of upstream's
-   * "10 mm before the top-left mark". For tuning if the cutter scans too near the paper's top edge.
-   */
+  /** Extra distance (mm) down the sheet at which the mark search starts, on top of regmarkSearchMarginMm. */
   regmarkScanOffsetMm: number;
+  /** How far up and left of the top-left mark (mm) the search starts: upstream's 10. */
+  regmarkSearchMarginMm: number;
   /**
    * The mark search (TB123) is one-shot. If it fails, it's retried starting this much further down
    * the sheet (mm, relative to the first attempt), one attempt per entry.
@@ -67,6 +70,7 @@ export const CUTTER_MODELS: CutterModel[] = [
     manufacturer: "Silhouette",
     name: "Cameo 3",
     protocol: "graphtec-gpgl",
+    gpglVariant: "cameo3",
     usb: { vendorId: 0x0b4d, productId: 0x112f },
     // The standard Serial Port Profile UUID. Upstream connects to raw RFCOMM channel 1 and never
     // looks the service up, so this is unconfirmed on hardware; ?btService=<uuid> overrides it.
@@ -81,14 +85,41 @@ export const CUTTER_MODELS: CutterModel[] = [
     // Tuned on hardware: from upstream's start (10 mm above the top-left mark) the first scan
     // missed and a retry 3 mm lower found the marks; starting 3 mm lower then worked first time.
     regmarkScanOffsetMm: 3,
+    regmarkSearchMarginMm: 10,
     regmarkSearchStepsMm: [0, 2, 4, 6],
     pressureRange: [1, 33],
     speedRange: [1, 10],
     toolHolders: 2,
     mat: { id: "cameo_12x12", widthMm: 304.8, heightMm: 304.8 },
   },
-  // Not yet supported — each needs its own setup-command variant in graphtec.ts and hardware testing:
-  //   Silhouette Cameo 4 (0x0b4d:0x1137), Cameo 5 (0x0b4d:0x1140), Portrait 3 (0x0b4d:0x113a), ...
+  {
+    id: "silhouette-cameo4",
+    manufacturer: "Silhouette",
+    name: "Cameo 4",
+    protocol: "graphtec-gpgl",
+    gpglVariant: "cameo4",
+    usb: { vendorId: 0x0b4d, productId: 0x1137 },
+    // Upstream matches "CAMEO 4", over the same service as the Cameo 3; unconfirmed on hardware here.
+    bluetooth: { rfcommServiceClassId: SERIAL_PORT_PROFILE_UUID, firmwarePrefixes: ["CAMEO4", "CAMEO 4"] },
+    bedWidthMm: 304.8,
+    maxLengthMm: 3000,
+    marginLeftMm: 0,
+    marginTopMm: 0,
+    regmarks: "standard",
+    regmarkArgOrder: "height_width",
+    homeCommand: null,
+    // Replies -1 after measuring the square unless the search starts below it; 6 mm clears a
+    // 5.5 mm square (tuned on hardware), not a larger one.
+    regmarkScanOffsetMm: 6,
+    regmarkSearchMarginMm: 0,
+    regmarkSearchStepsMm: [0, 2, 4, 6],
+    pressureRange: [1, 33],
+    speedRange: [1, 30],
+    toolHolders: 2,
+    mat: { id: "cameo_12x12", widthMm: 304.8, heightMm: 304.8 },
+  },
+  // Not yet supported — each needs a gpglVariant (upstream drives the Cameo 5 like a Cameo 4) and hardware testing:
+  //   Silhouette Cameo 5 (0x0b4d:0x1140), Portrait 3 (0x0b4d:0x113a), ...
 ];
 
 export function modelById(id: string): CutterModel | undefined {
@@ -116,8 +147,8 @@ export function provisionalBluetoothModel(): CutterModel | undefined {
 
 /**
  * Picks the model for a Bluetooth connection from its FG reply, then from the advertised device
- * name. If neither matches but only one known model has Bluetooth, that one is assumed (`guessed`):
- * the reply may not name the model (over USB a Cameo 3 has been seen to answer just "CAMEO V1.10").
+ * name. If neither matches and the reply names no model at all, the Cameo 3 (the first Bluetooth
+ * model) is assumed (`guessed`): over USB a Cameo 3 has been seen to answer just "CAMEO V1.10".
  */
 export function modelForBluetoothFirmware(firmware: string, deviceName = ""): { model: CutterModel; guessed: boolean } | undefined {
   const bt = CUTTER_MODELS.filter((m) => m.bluetooth);
@@ -126,5 +157,5 @@ export function modelForBluetoothFirmware(firmware: string, deviceName = ""): { 
     const match = t && bt.find((m) => m.bluetooth!.firmwarePrefixes.some((p) => t.startsWith(p.toUpperCase())));
     if (match) return { model: match, guessed: false };
   }
-  return bt.length === 1 ? { model: bt[0], guessed: true } : undefined;
+  return bt.length > 0 && /^CAMEO V\d/i.test(firmware.trim()) ? { model: bt[0], guessed: true } : undefined;
 }
