@@ -86,7 +86,8 @@ export interface Studio3Image {
 
 export interface Studio3Sticker {
   name: string;
-  imageId: string;
+  imageId: string; // "" for a cut outline with no artwork, such as a shape drawn in Studio
+  artwork: boolean; // false for such a shape; imageRect is then just the outline's box
   imageRect: { x: number; y: number; width: number; height: number }; // where the artwork sits on the page, mm
   contours: Contour[]; // the cut outline on the page, mm, with curves flattened
   bbox: { minX: number; minY: number; maxX: number; maxY: number }; // of contours
@@ -103,6 +104,7 @@ interface StickerRecord {
   matrixAt: number;
   pointOffsets: number[]; // of each outline point's x; its y follows
   handleOffsets: number[]; // likewise for each curve handle
+  params: { start: number; length: number } | null; // a shape's "type=autoshape;...;p1=x,y;..." text, if it has one
 }
 
 export interface Studio3Document {
@@ -111,7 +113,7 @@ export interface Studio3Document {
   pageHeightMm: number | null;
   images: Map<string, Studio3Image>;
   stickers: Studio3Sticker[];
-  skippedShapes: number; // objects that couldn't be read as a sticker (no artwork, artwork it can't show, rotated, text, ...)
+  skippedShapes: number; // objects with an outline that couldn't be read (rotated or mirrored, or artwork it can't show)
   /** The file as read, and where its stickers are, for writeStudio3. */
   source: { bytes: Uint8Array; root: Block; list: Block; records: StickerRecord[] };
 }
@@ -325,6 +327,38 @@ function findImageId(r: Reader, style: Block, images: Map<string, Studio3Image>)
   return null;
 }
 
+/**
+ * Where a shape's parameter text is: Studio keeps how an auto-shape was drawn ("type=autoshape;
+ * subtype=polygon;p1=x,y;p2=x,y;sides=5;...") beside its outline, as a u32 length and the text.
+ */
+function findShapeParams(r: Reader, block: Block): { start: number; length: number } | null {
+  const needle = "type=autoshape;";
+  for (let at = block.body + 4; at + needle.length <= block.end; at++) {
+    if (r.u8(at) !== 0x74 || r.text(at, needle.length) !== needle) continue;
+    const length = r.u32(at - 4);
+    if (length >= needle.length && length < 1024 && at + length <= block.end) return { start: at, length };
+  }
+  return null;
+}
+
+/**
+ * A shape's parameter text with every point (p1=x,y, p2=x,y, ...) moved by the same mapping as
+ * its outline. Each number is written in the width it had, so the text and every size around it
+ * stay as they were; a number that can't be written in that width is left alone.
+ */
+export function movedShapeParams(text: string, mapX: (x: number) => number, mapY: (y: number) => number): string {
+  const fit = (value: number, original: string): string => {
+    for (let digits = 8; digits >= 0; digits--) {
+      const s = value.toFixed(digits);
+      if (s.length === original.length) return s;
+    }
+    return original;
+  };
+  return text.replace(/\bp(\d+)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g, (_, n: string, xs: string, ys: string) =>
+    `p${n}=${fit(mapX(Number(xs)), xs)},${fit(mapY(Number(ys)), ys)}`
+  );
+}
+
 type RecordResult = { sticker: Studio3Sticker; record: StickerRecord } | "skipped" | null;
 
 /** Reads one entry of the object list: a sticker, an outline this reader can't use, or (null) something else such as a layer. */
@@ -342,7 +376,7 @@ function readRecord(r: Reader, block: Block, images: Map<string, Studio3Image>):
 
   const imageId = findImageId(r, style, images);
   const upright = Math.abs(m[1]) < 1e-6 && Math.abs(m[3]) < 1e-6 && m[0] > 0 && m[4] > 0;
-  if (!imageId || !upright || !images.get(imageId)!.mime) return "skipped";
+  if (!upright || (imageId && !images.get(imageId)!.mime)) return "skipped";
   const contours = path.subpaths
     .filter((s) => s.closed && s.points.length >= 2)
     .map((s) => flatten(s.points))
@@ -352,16 +386,20 @@ function readRecord(r: Reader, block: Block, images: Map<string, Studio3Image>):
     });
   if (contours.length === 0) return "skipped";
 
-  const image = images.get(imageId)!;
+  const bbox = boundingBox(contours);
+  const image = imageId ? images.get(imageId)! : null;
   return {
     sticker: {
       name: readName(r, pathBlock.end, block.end),
-      imageId,
-      imageRect: { x: m[2], y: m[5], width: m[0] * image.widthPx, height: m[4] * image.heightPx },
+      imageId: imageId ?? "",
+      artwork: !!image,
+      imageRect: image
+        ? { x: m[2], y: m[5], width: m[0] * image.widthPx, height: m[4] * image.heightPx }
+        : { x: bbox.minX, y: bbox.minY, width: bbox.maxX - bbox.minX, height: bbox.maxY - bbox.minY },
       contours,
-      bbox: boundingBox(contours),
+      bbox,
     },
-    record: { block, matrixAt, pointOffsets: path.pointOffsets, handleOffsets: path.handleOffsets },
+    record: { block, matrixAt, pointOffsets: path.pointOffsets, handleOffsets: path.handleOffsets, params: findShapeParams(r, block) },
   };
 }
 
@@ -453,7 +491,7 @@ export function writeStudio3(doc: Studio3Document, placements: Studio3Placement[
 
     const mapX = (x: number) => (x - minX) * p.scaleX + p.x;
     const mapY = (y: number) => (y - minY) * p.scaleY + p.y;
-    const { matrixAt, pointOffsets, handleOffsets } = records[p.index];
+    const { matrixAt, pointOffsets, handleOffsets, params } = records[p.index];
     set(matrixAt, get(matrixAt) * p.scaleX);
     set(matrixAt + 8, mapX(get(matrixAt + 8)));
     set(matrixAt + 16, get(matrixAt + 16) * p.scaleY);
@@ -469,6 +507,11 @@ export function writeStudio3(doc: Studio3Document, placements: Studio3Placement[
     for (const at of handleOffsets) {
       set(at, get(at) * p.scaleX);
       set(at + 4, get(at + 4) * p.scaleY);
+    }
+    if (params) {
+      const text = new TextDecoder().decode(out.subarray(params.start, params.start + params.length));
+      const moved = movedShapeParams(text, mapX, mapY);
+      if (moved.length === text.length) out.set(new TextEncoder().encode(moved), params.start);
     }
   }
 

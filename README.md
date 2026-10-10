@@ -77,8 +77,9 @@ files and is deliberately narrow:
 - **Import** reads files saved by Silhouette Studio 5. It brings in stickers — an image with a
   cut outline around it, such as a traced PNG — along with the page size. The outline comes from
   the file, so the Offset Margin control doesn't apply to imported stickers. Other objects
-  (text, plain shapes, rotated or mirrored stickers, artwork in a format a browser can't draw)
-  aren't shown yet; the status line says how many were left out.
+  (rotated or mirrored objects, artwork in a format a browser can't draw) aren't shown yet; the
+  status line says how many were left out. Shapes drawn in Studio, such as a polygon, come in as
+  cut-only outlines with no artwork, and can be moved, resized or deleted like a sticker.
 - **Placement is automatic.** A sticker closer to the edge than the cutter can reach, or sitting on
   a registration mark, is moved the shortest distance that fixes it, and the packer keeps added
   stickers the usual gap away from every side of the imported ones. There's nothing to confirm.
@@ -90,8 +91,9 @@ files and is deliberately narrow:
 - The file's stored preview thumbnail isn't redrawn, so a file browser may show the old layout
   until Studio saves the file again. Studio also keeps a cached cut job in the file (its path data
   and bounding box) that isn't updated either. Moves and deletes were checked against files saved
-  by Studio itself, and match them apart from that cache; whether Studio rebuilds the cache when it
-  opens an exported file hasn't been confirmed, so look at the cut preview before sending one.
+  by Studio itself, and match them apart from that cache. An export with a sticker moved was
+  reopened in Studio with the sticker in its new place; look at the cut preview before sending one
+  to the cutter, as nobody has yet confirmed that the cut follows the new position.
 
 ## Supported cutters
 

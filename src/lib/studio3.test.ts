@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flatten, parseStudio3, Studio3Error, writeStudio3, type PathPoint, type Studio3Document, type Studio3Placement } from "./studio3";
+import { flatten, movedShapeParams, parseStudio3, Studio3Error, writeStudio3, type PathPoint, type Studio3Document, type Studio3Placement } from "./studio3";
 import fixtureDataUrl from "./fixtures/six-stickers.studio3?inline";
 
 // A file saved by Silhouette Studio 5.0.539: six copies of one traced sticker on a Letter page.
@@ -205,6 +205,69 @@ describe("a document with no stickers", () => {
 
     const doc = parseStudio3(bytes);
     expect(doc.images.size).toBe(0);
-    expect(doc.stickers).toHaveLength(0);
+    // The outlines are still there; with no artwork to go with them they read as cut-only shapes.
+    expect(doc.stickers).toHaveLength(6);
+    expect(doc.stickers.every((s) => !s.artwork)).toBe(true);
+  });
+});
+
+describe("shapes", () => {
+  /** The fixture with the first sticker's reference to its artwork broken, so it is an outline alone. */
+  function withFirstStickerAsShape(): Uint8Array {
+    const bytes = fixture.slice();
+    const id = parseStudio3(fixture).stickers[0].imageId;
+    const text = new TextEncoder().encode(id);
+    const at = bytes.findIndex((_, i) => text.every((c, j) => bytes[i + j] === c)); // its first use, in the document
+    bytes[at] = bytes[at] === 0x30 ? 0x31 : 0x30;
+    return bytes;
+  }
+
+  it("reads an outline with no artwork as a cut-only shape, beside the stickers", () => {
+    const doc = parseStudio3(withFirstStickerAsShape());
+    expect(doc.stickers).toHaveLength(6);
+    expect(doc.skippedShapes).toBe(0);
+    const [shape, ...rest] = doc.stickers;
+    expect(shape.artwork).toBe(false);
+    expect(shape.imageId).toBe("");
+    expect(shape.imageRect).toEqual({
+      x: shape.bbox.minX,
+      y: shape.bbox.minY,
+      width: shape.bbox.maxX - shape.bbox.minX,
+      height: shape.bbox.maxY - shape.bbox.minY,
+    });
+    expect(rest.every((s) => s.artwork)).toBe(true);
+  });
+
+  it("moves a shape like a sticker, and deleting it leaves the rest", () => {
+    const doc = parseStudio3(withFirstStickerAsShape());
+    const { minX, minY } = doc.stickers[0].bbox;
+    const moved = parseStudio3(writeStudio3(doc, inPlace(doc).map((p) => (p.index === 0 ? { ...p, x: minX + 12, y: minY + 7 } : p))));
+    expect(moved.stickers[0].bbox.minX).toBeCloseTo(minX + 12, 3);
+    expect(moved.stickers[0].bbox.minY).toBeCloseTo(minY + 7, 3);
+    const rest = parseStudio3(writeStudio3(doc, inPlace(doc).filter((p) => p.index !== 0)));
+    expect(rest.stickers).toHaveLength(5);
+  });
+});
+
+describe("movedShapeParams", () => {
+  const text = "type=autoshape;subtype=polygon;p1=117.06285,51.22940;p2=131.11183,70.59422;sides=5;auto_type=1";
+
+  it("moves the points with the outline and leaves everything else", () => {
+    const out = movedShapeParams(text, (x) => x + 10, (y) => y + 5);
+    expect(out).toBe("type=autoshape;subtype=polygon;p1=127.06285,56.22940;p2=141.11183,75.59422;sides=5;auto_type=1");
+  });
+
+  it("keeps the text the same length when a number gains or loses a digit", () => {
+    const shrunk = movedShapeParams(text, (x) => x - 30, (y) => y - 45); // 117.06 -> 87.06, 51.23 -> 6.23
+    const grown = movedShapeParams(text, (x) => x + 90, (y) => y + 60); // 117.06 -> 207.06, 51.23 -> 111.23
+    for (const out of [shrunk, grown]) expect(out).toHaveLength(text.length);
+    expect(shrunk).toContain("p1=87.06285");
+    expect(grown).toContain("p1=207.06285");
+    expect(grown).toContain("sides=5;auto_type=1");
+  });
+
+  it("scales about the same point as the outline", () => {
+    const out = movedShapeParams("p1=100.00000,50.00000", (x) => (x - 90) * 2 + 90, (y) => (y - 40) * 2 + 40);
+    expect(out).toBe("p1=110.00000,60.00000");
   });
 });

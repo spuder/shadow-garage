@@ -1017,6 +1017,10 @@ function startMove(e: PointerEvent, design: StickerDesign) {
 }
 
 // ---- Silhouette Studio files ----
+/** The artwork of an imported shape: a 1 px transparent image, so only its cut outline shows. */
+const NO_ARTWORK =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
+
 function isStudio3File(file: File): boolean {
   return /\.studio3$/i.test(file.name);
 }
@@ -1057,8 +1061,8 @@ async function importStudio3(file: File): Promise<boolean> {
 
   const imageUrls = new Map<string, string>();
   try {
-    for (const { imageId } of doc.stickers) {
-      if (imageUrls.has(imageId)) continue;
+    for (const { imageId, artwork } of doc.stickers) {
+      if (!artwork || imageUrls.has(imageId)) continue;
       const image = doc.images.get(imageId)!;
       imageUrls.set(imageId, await readAsDataURL(new Blob([image.bytes.slice()], { type: image.mime })));
     }
@@ -1079,8 +1083,8 @@ async function importStudio3(file: File): Promise<boolean> {
     };
     return {
       id: uid(),
-      fileName: `${label} #${i + 1}`,
-      imageDataUrl: imageUrls.get(s.imageId)!,
+      fileName: s.artwork ? `${label} #${i + 1}` : `${label} shape #${i + 1}`,
+      imageDataUrl: s.artwork ? imageUrls.get(s.imageId)! : NO_ARTWORK,
       raw: null,
       artworkAspect: s.imageRect.width / s.imageRect.height,
       widthMm: base.actualWmm,
@@ -1099,15 +1103,16 @@ async function importStudio3(file: File): Promise<boolean> {
   state.editingPlacementXY = null;
   if (doc.pageWidthMm && doc.pageHeightMm) state.sheetIndex = sheetIndexFor(doc.pageWidthMm, doc.pageHeightMm);
 
-  const count = doc.stickers.length;
-  let text = `Imported ${count} sticker${count === 1 ? "" : "s"} from ${file.name}.`;
+  const shapes = doc.stickers.filter((s) => !s.artwork).length;
+  const count = doc.stickers.length - shapes;
+  let text = `Imported ${count} sticker${count === 1 ? "" : "s"}${shapes > 0 ? ` and ${shapes} shape${shapes === 1 ? "" : "s"}` : ""} from ${file.name}.`;
   const nudged = fitPinnedToSheet(currentSheet());
   if (nudged > 0) {
     text += ` ${nudged} ${nudged === 1 ? "was" : "were"} moved in from the edge or a registration mark so the cutter can reach ${nudged === 1 ? "it" : "them"}.`;
   }
   if (doc.skippedShapes > 0) {
     const n = doc.skippedShapes;
-    text += ` ${n} other object${n === 1 ? " was" : "s were"} left out (text, shapes, rotated stickers, or artwork it can't show); Export keeps ${n === 1 ? "it" : "them"} in the file.`;
+    text += ` ${n} other object${n === 1 ? " was" : "s were"} left out (rotated or mirrored, or artwork it can't show); Export keeps ${n === 1 ? "it" : "them"} in the file.`;
   }
   state.studio3Status = { text, error: false };
   showTab("sheet");
