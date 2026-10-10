@@ -177,6 +177,6 @@ export async function reconnectBluetoothCutter({ serviceOverride = null }: { ser
 export function identifyBluetoothModel(firmware: string, log: LoggingTransport, deviceName = ""): CutterModel {
   const found = modelForBluetoothFirmware(firmware, deviceName);
   if (!found) throw new CutterAccessError(`Connected over Bluetooth, but this cutter ("${firmware}") isn't supported.`);
-  if (found.guessed) log.note(`firmware "${firmware}" doesn't name a model; assuming ${found.model.manufacturer} ${found.model.name}, the only Bluetooth model known`);
+  if (found.guessed) log.note(`firmware "${firmware}" doesn't name a model; assuming ${found.model.manufacturer} ${found.model.name}`);
   return found.model;
 }

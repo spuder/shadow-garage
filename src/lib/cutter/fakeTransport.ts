@@ -46,6 +46,7 @@ export class FakeTransport implements Transport {
       .join("")
       .replace(/\x1b\x04/g, "<ESC EOT>\x03")
       .replace(/\x1b\x05/g, "<ESC ENQ>\x03")
+      .replace(/\x1b\x15/g, "<ESC NAK>\x03")
       .split("\x03")
       .filter((c) => c.length > 0);
   }
@@ -70,6 +71,7 @@ export function cameo3Responder({ statuses = ["0"], regmarkReply = "    0\x03" }
     "TB71\x03": "    0,    0\x03",
     "FA\x03": "    0,    0\x03",
     "TC\x03": "0,0\x03",
+    "\x1b\x15": " 2, 0\x03", // Cameo 4 tool setup: AutoBlade in holder 1
   };
   return (written) => {
     if (written === "\x1b\x05") return (queue.length > 1 ? queue.shift()! : queue[0]) + "\x03";

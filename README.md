@@ -12,7 +12,7 @@ Shadow Garage is the self-hostable, open-source alternative to Silhouette Studio
 print-and-cut stickers. It's a browser-only web app — static files, no backend, no install — that
 turns a logo, wordmark, or image into a sticker sheet: it auto-traces a die-cut outline around
 your artwork, packs the stickers onto a page with real Silhouette-style registration marks,
-prints from the browser, and cuts on a Silhouette Cameo 3 directly over USB or Bluetooth. Use the
+prints from the browser, and cuts on a Silhouette Cameo 3 or 4 directly over USB or Bluetooth. Use the
 hosted copy above, or build it and serve it yourself.
 
 ## Why this exists
@@ -30,8 +30,8 @@ choosing between two bad options:
 Shadow Garage replaces both for the sticker workflow. It handles the part that's genuinely
 annoying to get right — turning an arbitrary image into a correctly-sized, correctly-registered
 cut — entirely in the browser, with no install, and then drives the cutter itself over WebUSB or
-Web Bluetooth (Chrome or Edge). It isn't a general-purpose design tool, and the Cameo 3 is the
-only machine it cuts on so far. For anything else, download the SVG (marks included) and hand it
+Web Bluetooth (Chrome or Edge). It isn't a general-purpose design tool, and the Cameo 3 and 4 are
+the only machines it cuts on so far. For anything else, download the SVG (marks included) and hand it
 to whichever cutting path you've already got working: Silhouette Studio,
 [Plottie](https://github.com/mossblaser/plottie) (a command-line tool that cuts/plots an SVG on a
 Silhouette machine directly — no Silhouette Studio or Inkscape required, and it auto-detects
@@ -59,7 +59,7 @@ registration marks), or any other script that talks to the cutter.
   placement automatically kept clear of the marks so nothing overlaps or obscures them.
 - **Print directly** to your system print dialog at true physical size, or **download the SVG**
   for use elsewhere.
-- **Cut directly on a Silhouette Cameo 3** over USB or Bluetooth from Chrome or Edge — see
+- **Cut directly on a Silhouette Cameo 3 or 4** over USB or Bluetooth from Chrome or Edge — see
   [docs/cutter-setup.md](docs/cutter-setup.md).
 - Paper types (White sticker / Clear sticker / 20 lb printer paper), each with its own cut
   settings, and a dark/light theme.
