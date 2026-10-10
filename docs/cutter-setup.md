@@ -49,8 +49,8 @@ roll the driver back in Device Manager. Bluetooth isn't tested on Windows either
 
 ## Bluetooth (macOS and Linux)
 
-The Cameo 3 and 4 can also be driven over Bluetooth. So far only a Cameo 4 has been driven over it on
-hardware (Bluetooth LE); USB is the proven path.
+The Cameo 3 and 4 can also be driven over Bluetooth, and both have been on hardware. USB is the
+more proven path.
 
 1. Unplug the USB cable, quit Silhouette Studio, and turn on the cutter's Bluetooth.
 2. **Pair the cutter with the computer first**: **System Settings → Bluetooth** on macOS, or
@@ -181,7 +181,7 @@ taps still drift, send the log from two back-to-back test cuts.
 - The sticker-paper pressure, speed and blade depth (`src/lib/cutter/materials.ts`) are
   inkscape-silhouette's defaults and still need tuning for a clean kiss cut.
 - Letter and A4 sheets only — A3 doesn't fit on the 12×12 mat.
-- **Bluetooth** is for the Cameo 3 and 4; so far only a Cameo 4 has been driven over it (Bluetooth
-  LE). Other models would need adding to `src/lib/cutter/models.ts` first.
+- **Bluetooth** is for the Cameo 3 and 4, both driven over it on hardware. Other models would need
+  adding to `src/lib/cutter/models.ts` first.
 - **Cameo 4** commands follow inkscape-silhouette's. Print-and-cut has been dry-run on one; real
   cuts aren't yet confirmed.

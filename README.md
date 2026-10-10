@@ -64,6 +64,35 @@ registration marks), or any other script that talks to the cutter.
 - Paper types (White sticker / Clear sticker / 20 lb printer paper), each with its own cut
   settings, and a dark/light theme.
 
+## Supported cutters
+
+Direct cutting is confirmed only on the hardware that contributors own. Each row shows what a
+person has run on a real machine.
+
+| Cutter | USB | Bluetooth | Bed width used |
+|---|---|---|---|
+| Silhouette Cameo 3 | ✅ Tested | ✅ Tested | 12 in (304.8 mm) |
+| Silhouette Cameo 4 | ⚠️ Not confirmed | ✅ Mark scan and dry run tested (Bluetooth LE) | 12 in (304.8 mm) |
+| Silhouette Cameo 4 Plus | ❌ Not recognised | 🧪 Untested — connects as a Cameo 4 | 12 in, not the full 15 in |
+| Silhouette Cameo 4 Pro | ❌ Not recognised | 🧪 Untested — connects as a Cameo 4 | 12 in, not the full 24 in |
+| Other models (Cameo 5, Portrait 3, …) | ❌ Not supported | ❌ Not supported | — |
+
+**Testers wanted.** If you have a Cameo 4 Plus or Pro, or can fill in a ⚠️ cell above, connect
+the cutter, run a **Dry run**, push **Copy log**, and
+[open an issue](https://github.com/spuder/shadow-garage/issues) with the log. See
+[docs/cutter-setup.md](docs/cutter-setup.md) for setup, and its "Current limitations" section for
+what is still open.
+
+### Checklist
+
+- [x] Cameo 3 over USB: print and cut
+- [x] Cameo 3 over Bluetooth
+- [ ] Cameo 4 over USB
+- [x] Cameo 4 over Bluetooth LE: mark scan and dry run
+- [ ] Cameo 4: real cuts confirmed
+- [ ] Cameo 4 Plus (USB id and 15 in bed)
+- [ ] Cameo 4 Pro (USB id and 24 in bed)
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
