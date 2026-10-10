@@ -79,7 +79,8 @@ files and is deliberately narrow:
   the file, so the Offset Margin control doesn't apply to imported stickers. Other objects
   (rotated or mirrored objects, artwork in a format a browser can't draw) aren't shown yet; the
   status line says how many were left out. Shapes drawn in Studio, such as a polygon, come in as
-  cut-only outlines with no artwork, and can be moved, resized or deleted like a sticker.
+  cut-only outlines with no artwork, and can be moved, resized or deleted like a sticker. A moved
+  and a resized shape were checked against the same edit made in Studio itself.
 - **Placement is automatic.** A sticker closer to the edge than the cutter can reach, or sitting on
   a registration mark, is moved the shortest distance that fixes it, and the packer keeps added
   stickers the usual gap away from every side of the imported ones. There's nothing to confirm.

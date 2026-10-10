@@ -492,10 +492,15 @@ export function writeStudio3(doc: Studio3Document, placements: Studio3Placement[
     const mapX = (x: number) => (x - minX) * p.scaleX + p.x;
     const mapY = (y: number) => (y - minY) * p.scaleY + p.y;
     const { matrixAt, pointOffsets, handleOffsets, params } = records[p.index];
-    set(matrixAt, get(matrixAt) * p.scaleX);
-    set(matrixAt + 8, mapX(get(matrixAt + 8)));
-    set(matrixAt + 16, get(matrixAt + 16) * p.scaleY);
-    set(matrixAt + 20, mapY(get(matrixAt + 20)));
+    // An auto-shape is defined by its parameter text, which is in page coordinates, and its matrix
+    // is the identity. Moving the matrix as well as the text moves it twice when Studio rebuilds
+    // the shape, so it is left alone. A sticker's matrix is what places its artwork on the page.
+    if (!params) {
+      set(matrixAt, get(matrixAt) * p.scaleX);
+      set(matrixAt + 8, mapX(get(matrixAt + 8)));
+      set(matrixAt + 16, get(matrixAt + 16) * p.scaleY);
+      set(matrixAt + 20, mapY(get(matrixAt + 20)));
+    }
     set(matrixAt + CENTRE_OFFSET, mapX(get(matrixAt + CENTRE_OFFSET)));
     set(matrixAt + CENTRE_OFFSET + 4, mapY(get(matrixAt + CENTRE_OFFSET + 4)));
     set(matrixAt + EXTENTS_OFFSET, get(matrixAt + EXTENTS_OFFSET) * p.scaleX);

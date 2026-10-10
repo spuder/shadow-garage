@@ -13,7 +13,7 @@
   --checker-a: #17171d;
   --checker-b: #1d1d24;
   --sheet-paper: #6f6f78;
-  --cut-line: #ff8a8a; /* pure red is nearly the same brightness as the grey sheet, so it's lightened on screen */
+  --cut-line: #ff8a8a; /* lighter than the printed red, which would sit on the grey sheet at about 1.2:1 contrast */
   --danger: #ff5252;
   --success: #2fd27a;
   --warning: #ffb020;
@@ -182,12 +182,10 @@ html, body {
 #viewportInner .sheet-paper {
   fill: var(--sheet-paper);
 }
-/* The real cut width is 0.15 mm, under a pixel when the sheet is fitted, so on screen the line keeps
-   a constant width at any zoom. Print and export are built separately and keep the true width. */
+/* The line keeps its true 0.15 mm width, so it is fine at any zoom. Only its colour changes with the
+   theme: pure red is nearly the brightness of the dark-mode sheet. */
 #viewportInner #cutlines path {
-  vector-effect: non-scaling-stroke;
   stroke: var(--cut-line);
-  stroke-width: 1.5px;
 }
 
 .overlay-layer {

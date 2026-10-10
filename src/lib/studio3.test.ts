@@ -271,3 +271,74 @@ describe("movedShapeParams", () => {
     expect(out).toBe("p1=110.00000,60.00000");
   });
 });
+
+describe("an auto-shape from Studio", () => {
+  // The object record of a pentagon drawn with Studio's polygon tool (806 bytes, no artwork),
+  // taken from a file saved by Studio 5.0.539. Its matrix is the identity and its geometry is the
+  // outline plus the "type=autoshape;...;p1=x,y;p2=x,y" text, all in page mm.
+  const pentagonRecord = Uint8Array.from(atob("ASUDAAAAAR4CAAAJrgEAAAABYQEAAAABAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAASkAAAADAAAAY3V0AwAAAEN1dAEAAAAwAACAP5qZGT+amRk/AACAPwAAAAcAAAByb3VuZGVkAQcAAAByb3VuZGVkAAAAAAAAAAAAAAABAAwABAAAgD8AAIA/AAAAAAABAAEAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAQAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAAABCAAAAP////8NAAAARGVmYXVsdCBMYXllcpaVFT+koyM/qqkpPwAAgD8AAAA/DJPJP9NNkj8AAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAIA//////wAAAAAAAAAAAGZmmEIAAIA/AAAAAAAAAAAAAAAAMgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAEAAAABAAAAAAAAAAAAAAAAAAAAAAFmAAAAXgAAAHR5cGU9YXV0b3NoYXBlO3N1YnR5cGU9cG9seWdvbjtwMT0xMTcuMDYyODUsNTEuMjI5NDA7cDI9MTMxLjExMTgzLDcwLjU5NDIyO3NpZGVzPTU7YXV0b190eXBlPTEAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/9BzqQm0wWEJG/+BBAAAAAAAAAABuCNZBAgAAAAABQwAAAAAAAAA7AAAAAQQAAAAj3bFComRxQgAADGXHQm1Y2kEAABp2BkOBidpBAABjLhFDVoxxQgAAvhXqQlKaoUIAAAFRzAEAAAAAAAEMAAAAAAAAAAAAAAAPAAAAUmVndWxhciBQb2x5Z29uAAAAACAAAABlYTc1NTZlOWNhYzM1ZDIxZjFjY2YxNGFjNDk2ZjI1NQAAAAAAAAAAAAAAAP////8AAAAAEwAAAGNyZWF0ZV9hdXRvLXBvbHlnb24="), (c) => c.charCodeAt(0));
+
+  /** The fixture with the pentagon appended to its object list. */
+  function withPentagon(): Uint8Array {
+    const base = parseStudio3(fixture);
+    const { list, root } = base.source;
+    const view = new DataView(fixture.buffer, fixture.byteOffset, fixture.byteLength);
+    const out = new Uint8Array(fixture.length + pentagonRecord.length);
+    out.set(fixture.subarray(0, list.end));
+    out.set(pentagonRecord, list.end);
+    out.set(fixture.subarray(list.end), list.end + pentagonRecord.length);
+    const o = new DataView(out.buffer);
+    const grow = (at: number, by: number) => o.setUint32(at, o.getUint32(at, true) + by, true);
+    grow(list.start + 1, pentagonRecord.length);
+    grow(root.start + 1, pentagonRecord.length);
+    grow(list.body, 1); // the list's last index
+    o.setBigUint64(0x10, view.getBigUint64(0x10, true) + BigInt(pentagonRecord.length), true);
+    return out;
+  }
+
+  const floatsAt = (bytes: Uint8Array, at: number, n: number) =>
+    Array.from({ length: n }, (_, i) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getFloat32(at + 4 * i, true));
+  const paramsOf = (doc: Studio3Document, bytes: Uint8Array) => {
+    const p = doc.source.records[doc.stickers.length - 1].params!;
+    return new TextDecoder().decode(bytes.subarray(p.start, p.start + p.length));
+  };
+
+  it("is read as a cut-only shape, with its parameter text found", () => {
+    const bytes = withPentagon();
+    const doc = parseStudio3(bytes);
+    expect(doc.stickers).toHaveLength(7);
+    const shape = doc.stickers[6];
+    expect(shape.artwork).toBe(false);
+    expect(shape.contours[0]).toHaveLength(5);
+    expect(shape.bbox.minX).toBeCloseTo(88.932, 2);
+    expect(shape.bbox.minY).toBeCloseTo(27.293, 2);
+    expect(paramsOf(doc, bytes)).toBe("type=autoshape;subtype=polygon;p1=117.06285,51.22940;p2=131.11183,70.59422;sides=5;auto_type=1");
+  });
+
+  it("moves with its outline, centre and parameters, and its matrix stays the identity as Studio leaves it", () => {
+    const bytes = withPentagon();
+    const doc = parseStudio3(bytes);
+    const { bbox } = doc.stickers[6];
+    const out = writeStudio3(doc, inPlace(doc).map((p) => (p.index === 6 ? { ...p, x: bbox.minX + 20, y: bbox.minY + 10 } : p)));
+    const moved = parseStudio3(out);
+    const at = moved.source.records[6].matrixAt;
+    expect(floatsAt(out, at, 9)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    expect(moved.stickers[6].bbox.minX).toBeCloseTo(bbox.minX + 20, 3);
+    expect(moved.stickers[6].bbox.minY).toBeCloseTo(bbox.minY + 10, 3);
+    expect(floatsAt(out, at + 36, 2)[0]).toBeCloseTo(117.0565 + 20, 2); // the centre
+    expect(paramsOf(moved, out)).toBe("type=autoshape;subtype=polygon;p1=137.06285,61.22940;p2=151.11183,80.59422;sides=5;auto_type=1");
+    expect(out.length).toBe(bytes.length);
+  });
+
+  it("scales about its top-left corner when resized, as Studio does", () => {
+    const bytes = withPentagon();
+    const doc = parseStudio3(bytes);
+    const { bbox } = doc.stickers[6];
+    const out = writeStudio3(doc, inPlace(doc).map((p) => (p.index === 6 ? { ...p, scaleX: 1.5, scaleY: 1.5 } : p)));
+    const resized = parseStudio3(out);
+    expect(resized.stickers[6].bbox.maxX - resized.stickers[6].bbox.minX).toBeCloseTo((bbox.maxX - bbox.minX) * 1.5, 2);
+    expect(floatsAt(out, resized.source.records[6].matrixAt, 9)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    // p1 (117.06285, 51.2294) maps about the corner (88.932, 27.293) by 1.5: (131.128, 63.2695)
+    expect(paramsOf(resized, out)).toContain("p1=131.12");
+  });
+});
