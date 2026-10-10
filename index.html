@@ -61,10 +61,8 @@
               <div class="block-title">Silhouette Studio File</div>
               <div class="export-buttons">
                 <button id="importStudio3Btn" class="btn-secondary small">Import .studio3</button>
-                <button id="exportStudio3Btn" class="btn-secondary small" disabled>Export .studio3</button>
               </div>
-              <div class="hint-text">Opens a Silhouette Studio 5 file with every sticker separate: drag one to move it, resize or delete it. Export saves those changes back into the file.</div>
-              <div id="studio3Status" class="hint-text" hidden></div>
+              <div class="hint-text">Opens a Silhouette Studio 5 file with every sticker separate: drag one to move it, resize or delete it. Export .studio3, next to Print below, saves those changes back into the file.</div>
             </div>
 
             <div class="panel-block" id="imageBlock" hidden>
@@ -232,11 +230,13 @@
               <input id="printCutLinesToggle" type="checkbox" />
               Print cut lines (the downloaded SVG always has them)
             </label>
+            <div id="studio3Status" class="hint-text" hidden></div>
             <div class="export-buttons">
               <button id="printBtn" class="btn-primary" disabled>Print</button>
-              <button id="downloadSvgBtn" class="btn-secondary" disabled>Download SVG</button>
+              <button id="exportStudio3Btn" class="btn-secondary" disabled>Export .studio3</button>
             </div>
             <button id="sendToCutterBtn" class="btn-primary" disabled>Send to Cutter</button>
+            <button id="downloadSvgBtn" class="link-btn" disabled>Download SVG</button>
           </div>
         </aside>
       </main>
