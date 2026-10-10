@@ -798,6 +798,15 @@ select {
   align-items: center;
 }
 
+/* A warning to read and dismiss, as opposed to the unsupported-browser alert, which blocks. */
+.browser-alert.is-warning {
+  border-color: var(--warning);
+}
+.browser-alert.is-warning .browser-alert-icon,
+.browser-alert.is-warning h2 {
+  color: var(--warning);
+}
+
 /* ---- Cutter connection: status dot, top-bar pill, connect dialog ---- */
 
 .status-dot {

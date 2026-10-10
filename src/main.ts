@@ -12,6 +12,8 @@ import { printSvg } from "./lib/print";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { isSupportedBrowser, showUnsupportedBrowserAlert } from "./lib/browserCheck";
+import { showAlert } from "./lib/alertDialog";
+import { isSvgFile } from "./lib/svgArtwork";
 import { fitCamera, zoomAt, panBy, mmToScreen, screenToMm, type Camera } from "./lib/camera";
 import { buildCalibrationSVG, calibrationPaths } from "./lib/cutter/calibration";
 import { buildCutPaths, CutJobError, layoutJob, testSquarePaths } from "./lib/cutter/job";
@@ -1120,12 +1122,23 @@ studio3Input.addEventListener("change", () => {
   if (file) void importStudio3(file);
 });
 
-exportStudio3Btn.addEventListener("click", () => {
+exportStudio3Btn.addEventListener("click", async () => {
   const source = state.studio3;
   if (!source) return;
   // Only stickers that came from the file can be written back to it.
   const fromFile = state.designs.filter((d) => d.imported && d.pinned && d.design);
   const added = state.designs.length - fromFile.length;
+  if (added > 0) {
+    const go = await showAlert({
+      title: `${added} sticker${added === 1 ? "" : "s"} won't be in the file`,
+      body:
+        `Stickers added in Shadow Garage can't be saved into a .studio3 file yet, so ${added === 1 ? "it" : "they"} will be missing when you open the file in Silhouette Studio. ` +
+        "Stickers from the original file, including any you moved, resized or deleted, are saved.",
+      confirmLabel: "Export anyway",
+      cancelLabel: "Cancel",
+    });
+    if (!go) return;
+  }
   try {
     const bytes = writeStudio3(
       source.doc,
@@ -1149,6 +1162,10 @@ exportStudio3Btn.addEventListener("click", () => {
 });
 
 // ---- image upload ----
+// Each SVG warning is shown once per page load, so it informs without nagging.
+let svgImportWarned = false;
+let svgDownloadAcknowledged = false;
+
 async function handleFiles(files: FileList | File[]) {
   const list = Array.from(files);
   // A .studio3 that can't be imported (or that the user declines to replace the sheet with) doesn't hold up the images dropped with it.
@@ -1199,6 +1216,16 @@ async function handleFiles(files: FileList | File[]) {
   state.needsRefit = true;
   state.editingSelected = false;
   recompute();
+  if (!svgImportWarned && list.some((f) => !isStudio3File(f) && isSvgFile(f))) {
+    svgImportWarned = true;
+    await showAlert({
+      title: "SVG artwork added",
+      body:
+        "The free Basic Edition of Silhouette Studio can't open SVG files, so a sheet downloaded as an SVG needs Silhouette Studio Designer Edition or higher. " +
+        "Printing and cutting from Shadow Garage work with any edition.",
+      confirmLabel: "Got it",
+    });
+  }
 }
 
 function removeDesign(id: string) {
@@ -1371,7 +1398,21 @@ function baseName(): string {
 downloadSvgBtn.addEventListener("click", () =>
   withBusyButton(downloadSvgBtn, async () => {
     const svg = await buildOutputSVG(true);
-    if (svg) downloadSvgString(svg, state.activeTab === "design" ? `${baseName()}-cut.svg` : `stickers-sheet.svg`);
+    if (!svg) return;
+    if (!svgDownloadAcknowledged) {
+      // The file is an SVG whatever the artwork is, so this applies to every sheet.
+      const go = await showAlert({
+        title: "This file won't open in free Silhouette Studio",
+        body:
+          "The free Basic Edition of Silhouette Studio can't open SVG files. Designer Edition or higher can. " +
+          "Printing and cutting from Shadow Garage work with any edition.",
+        confirmLabel: "Download anyway",
+        cancelLabel: "Cancel",
+      });
+      if (!go) return;
+      svgDownloadAcknowledged = true;
+    }
+    downloadSvgString(svg, state.activeTab === "design" ? `${baseName()}-cut.svg` : `stickers-sheet.svg`);
   })
 );
 
