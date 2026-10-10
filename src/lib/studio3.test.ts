@@ -3,8 +3,8 @@ import { flatten, parseStudio3, Studio3Error, writeStudio3, type PathPoint, type
 import fixtureDataUrl from "./fixtures/six-stickers.studio3?inline";
 
 // A file saved by Silhouette Studio 5.0.539: six copies of one traced sticker on a Letter page.
-// The artwork and thumbnail were swapped for flat placeholders and the cached cut job dropped;
-// the document itself is byte for byte what Studio wrote.
+// The artwork and thumbnail were swapped for flat placeholders and the cached cut job (sections 5
+// and 6) emptied; the document itself is byte for byte what Studio wrote.
 const fixture = Uint8Array.from(atob(fixtureDataUrl.slice(fixtureDataUrl.indexOf(",") + 1)), (c) => c.charCodeAt(0));
 
 function inPlace(doc: Studio3Document): Studio3Placement[] {
@@ -184,5 +184,27 @@ describe("flatten", () => {
     for (let i = 1; i < arc.length; i++) {
       expect(Math.hypot(arc[i][0] - arc[i - 1][0], arc[i][1] - arc[i - 1][1])).toBeLessThanOrEqual(0.55);
     }
+  });
+});
+
+describe("a document with no stickers", () => {
+  it("reads one whose image store is empty, as Studio saves after the last sticker is deleted", () => {
+    // Section 1 becomes a bare store: the 0x01 marker, its own size (16), and a last index of -1.
+    const view = new DataView(fixture.buffer, fixture.byteOffset, fixture.byteLength);
+    const sizes = Array.from({ length: 4 }, (_, i) => Number(view.getBigUint64(0x10 + 8 * i, true)));
+    const store = new Uint8Array(17);
+    store[0] = 1;
+    store[1] = 16;
+    store.fill(0xff, 9);
+    const start1 = 0x400 + sizes[0];
+    const bytes = new Uint8Array(fixture.length - sizes[1] + store.length);
+    bytes.set(fixture.subarray(0, start1));
+    bytes.set(store, start1);
+    bytes.set(fixture.subarray(start1 + sizes[1]), start1 + store.length);
+    new DataView(bytes.buffer).setBigUint64(0x10 + 8, BigInt(store.length), true);
+
+    const doc = parseStudio3(bytes);
+    expect(doc.images.size).toBe(0);
+    expect(doc.stickers).toHaveLength(0);
   });
 });

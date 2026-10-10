@@ -6,7 +6,10 @@
 //
 // File: the magic, then from 0x10 a table of u64 section sizes, three u64 version numbers at
 // 0x3e8, and the sections laid end to end from 0x400. Section 0 is the document, section 1 the
-// image store, section 2 a thumbnail PNG; the rest (a cached cut job, material tables) isn't read.
+// image store, section 2 a thumbnail PNG. Section 3 is a block of 0xFF. Sections 4 to 6 are the
+// document's cached cut job, which Studio rewrites on every save: 4 holds its bounding box in
+// device units (20 per mm) with the page size and counts, 5 and 6 its paths as substituted text.
+// None of those are read, or updated by writeStudio3.
 //
 // Document: the magic again, then nested blocks. A block is a 0x01 byte, a u32 size counting
 // itself and the body, then the body. Lists store the index of their last item, not a count.
@@ -140,6 +143,10 @@ class Reader {
   u32(at: number): number {
     return this.view.getUint32(at, true);
   }
+  /** A list's last-item index of -1: the list is empty. */
+  isU64Max(at: number): boolean {
+    return this.view.getBigUint64(at, true) === 0xffffffffffffffffn;
+  }
   u64(at: number): number {
     const value = this.view.getBigUint64(at, true);
     if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError("size out of range");
@@ -204,6 +211,7 @@ function sniffMime(bytes: Uint8Array): string {
 function readImages(r: Reader, section: { start: number; end: number }): Map<string, Studio3Image> {
   const images = new Map<string, Studio3Image>();
   if (section.end - section.start < 17 || r.u8(section.start) !== 1) return images; // no images in this document
+  if (r.isU64Max(section.start + 9)) return images; // a document with no stickers stores the last index as -1
   const last = r.u64(section.start + 9);
   let at = section.start + 17;
   for (let i = 0; i <= last; i++) {

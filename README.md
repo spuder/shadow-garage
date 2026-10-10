@@ -88,9 +88,10 @@ files and is deliberately narrow:
   can't be written to a `.studio3` yet, and neither can a sheet that didn't start from one; use
   **Download SVG** for those.
 - The file's stored preview thumbnail isn't redrawn, so a file browser may show the old layout
-  until Studio saves the file again. Studio also keeps a cached cut job in the file that isn't
-  updated either, and that hasn't been checked against a real file with a saved cut job: after
-  opening an exported file in Studio, look at the cut preview before sending it.
+  until Studio saves the file again. Studio also keeps a cached cut job in the file (its path data
+  and bounding box) that isn't updated either. Moves and deletes were checked against files saved
+  by Studio itself, and match them apart from that cache; whether Studio rebuilds the cache when it
+  opens an exported file hasn't been confirmed, so look at the cut preview before sending one.
 
 ## Supported cutters
 
