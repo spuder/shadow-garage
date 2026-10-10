@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getRegmarkKeepoutRects } from "./regmarks";
-import { SHEET_SIZES, packMixedSheet, type KeepoutRect, type MixedItem, type MixedPlacement, type SheetSize } from "./sheet";
+import { SHEET_SIZES, nudgeIntoArea, packMixedSheet, stickerKeepout, type KeepoutRect, type MixedItem, type MixedPlacement, type SheetSize } from "./sheet";
 
 const letter = SHEET_SIZES.find((s) => s.name === "Letter")!;
 const a3 = SHEET_SIZES.find((s) => s.name === "A3")!;
@@ -186,5 +186,61 @@ describe("packMixedSheet", () => {
     const ms = performance.now() - start;
     expect(placed.length).toBeGreaterThan(1500);
     expect(ms).toBeLessThan(1500);
+  });
+});
+
+describe("stickerKeepout", () => {
+  const gap = 4;
+  const narrow: SheetSize = { name: "Test", widthMm: 60, heightMm: 100 };
+  const fixed: Box = { x: 0, y: 60, w: 60, h: 30 }; // across the whole width, so only the space above it is left
+  const items: MixedItem[] = [
+    { id: "a", widthMm: 50, heightMm: 28 },
+    { id: "b", widthMm: 50, heightMm: 28 },
+  ];
+
+  it("keeps the gap above a fixed sticker: the second one doesn't fit flush on top of it", () => {
+    const placements = packMixedSheet(narrow, items, gap, 0, "single", [stickerKeepout(fixed, gap)], false);
+    expect(placements).toHaveLength(1);
+    for (const b of boxes(items, placements)) expect(clear(b, fixed, gap)).toBe(true);
+  });
+
+  it("without the extra height the packer would put one directly on it", () => {
+    const placements = packMixedSheet(narrow, items, gap, 0, "single", [fixed], false);
+    expect(placements).toHaveLength(2);
+    expect(boxes(items, placements).some((b) => !clear(b, fixed, gap))).toBe(true);
+  });
+
+  it("leaves the gap on every side when packing around one in the middle of a sheet", () => {
+    const mid: Box = { x: 60, y: 90, w: 40, h: 30 };
+    const stickers: MixedItem[] = [{ id: "s", widthMm: 30, heightMm: 25 }];
+    const placements = packMixedSheet(letter, stickers, gap, 8, "fill", [stickerKeepout(mid, gap)], false);
+    expect(placements.length).toBeGreaterThan(20);
+    for (const b of boxes(stickers, placements)) expect(clear(b, mid, gap)).toBe(true);
+  });
+});
+
+describe("nudgeIntoArea", () => {
+  const marks = getRegmarkKeepoutRects(letter.widthMm, letter.heightMm, false);
+
+  it("returns a sticker that is already in the clear exactly as it was", () => {
+    const rect: Box = { x: 60.123, y: 80.456, w: 40, h: 30 };
+    expect(nudgeIntoArea(rect, letter, 12, marks)).toEqual({ x: 60.123, y: 80.456 });
+  });
+
+  it("pulls a sticker in from the edge to the margin, and no further", () => {
+    expect(nudgeIntoArea({ x: 5, y: 150, w: 30, h: 30 }, letter, 12, [])).toEqual({ x: 12, y: 150 });
+    expect(nudgeIntoArea({ x: 200, y: 260, w: 30, h: 30 }, letter, 12, [])).toEqual({ x: letter.widthMm - 12 - 30, y: letter.heightMm - 12 - 30 });
+  });
+
+  it("moves a sticker off a registration mark by the shortest way", () => {
+    const rect: Box = { x: 12, y: 12, w: 40, h: 40 };
+    const at = nudgeIntoArea(rect, letter, 12, marks);
+    const moved: Box = { ...rect, ...at };
+    for (const m of marks) expect(clear(moved, m, 0)).toBe(true);
+    expect(Math.abs(at.x - 12) + Math.abs(at.y - 12)).toBeCloseTo(18, 6); // the mark's keepout is 30 mm; the margin is 12
+  });
+
+  it("keeps a sticker that is bigger than the area as near as it can get", () => {
+    expect(nudgeIntoArea({ x: 0, y: 0, w: 300, h: 40 }, letter, 12, [])).toEqual({ x: 12, y: 12 });
   });
 });

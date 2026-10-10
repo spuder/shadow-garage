@@ -53,6 +53,13 @@ const PATH_OFFSET = 65;
 
 /** Longest straight piece a curve is cut into. */
 const CURVE_STEP_MM = 0.5;
+/** Most pieces one curve is cut into; a long curve at the step above needs well over a hundred. */
+const MAX_CURVE_STEPS = 400;
+/**
+ * An entry of the object list that can't be read is counted as a left-out object rather than a
+ * layer when it is at least this big. A layer is a few hundred bytes; text and the like are more.
+ */
+const OBJECT_MIN_BYTES = 1024;
 /**
  * Outlines smaller than this both ways are left out. Studio's trace leaves specks a fraction of a
  * millimetre across beside the real outline, and they aren't worth lowering the blade for.
@@ -70,7 +77,7 @@ export interface Studio3Image {
   id: string;
   widthPx: number;
   heightPx: number;
-  mime: string;
+  mime: string; // "" when the bytes aren't a format a browser can draw
   bytes: Uint8Array;
 }
 
@@ -101,7 +108,7 @@ export interface Studio3Document {
   pageHeightMm: number | null;
   images: Map<string, Studio3Image>;
   stickers: Studio3Sticker[];
-  skippedShapes: number; // objects with an outline that couldn't be read as a sticker (no artwork, rotated, ...)
+  skippedShapes: number; // objects that couldn't be read as a sticker (no artwork, artwork it can't show, rotated, text, ...)
   /** The file as read, and where its stickers are, for writeStudio3. */
   source: { bytes: Uint8Array; root: Block; list: Block; records: StickerRecord[] };
 }
@@ -190,7 +197,8 @@ function sniffMime(bytes: Uint8Array): string {
   if (startsWith(0x47, 0x49, 0x46)) return "image/gif";
   if (startsWith(0x42, 0x4d)) return "image/bmp";
   if (startsWith(0x52, 0x49, 0x46, 0x46)) return "image/webp";
-  return "application/octet-stream";
+  if (new TextDecoder().decode(bytes.subarray(0, 512)).includes("<svg")) return "image/svg+xml";
+  return "";
 }
 
 function readImages(r: Reader, section: { start: number; end: number }): Map<string, Studio3Image> {
@@ -214,7 +222,7 @@ function readImages(r: Reader, section: { start: number; end: number }): Map<str
   return images;
 }
 
-interface PathPoint {
+export interface PathPoint {
   x: number;
   y: number;
   inX: number; // curve handles, relative to the point; zero when there isn't one
@@ -267,7 +275,7 @@ function readPath(r: Reader, block: Block): Path | null {
 }
 
 /** A closed subpath as a polygon, its curves cut into short straight pieces. */
-function flatten(points: PathPoint[]): Contour {
+export function flatten(points: PathPoint[]): Contour {
   const out: Contour = [];
   points.forEach((a, i) => {
     const b = points[(i + 1) % points.length];
@@ -278,7 +286,7 @@ function flatten(points: PathPoint[]): Contour {
     const c2x = b.x + b.inX;
     const c2y = b.y + b.inY;
     const length = Math.hypot(c1x - a.x, c1y - a.y) + Math.hypot(c2x - c1x, c2y - c1y) + Math.hypot(b.x - c2x, b.y - c2y);
-    const steps = Math.min(24, Math.ceil(length / CURVE_STEP_MM));
+    const steps = Math.min(MAX_CURVE_STEPS, Math.ceil(length / CURVE_STEP_MM));
     for (let s = 1; s < steps; s++) {
       const t = s / steps;
       const u = 1 - t;
@@ -326,7 +334,7 @@ function readRecord(r: Reader, block: Block, images: Map<string, Studio3Image>):
 
   const imageId = findImageId(r, style, images);
   const upright = Math.abs(m[1]) < 1e-6 && Math.abs(m[3]) < 1e-6 && m[0] > 0 && m[4] > 0;
-  if (!imageId || !upright) return "skipped";
+  if (!imageId || !upright || !images.get(imageId)!.mime) return "skipped";
   const contours = path.subpaths
     .filter((s) => s.closed && s.points.length >= 2)
     .map((s) => flatten(s.points))
@@ -382,7 +390,7 @@ function parse(bytes: Uint8Array): Studio3Document {
     else if (result) {
       stickers.push(result.sticker);
       records.push(result.record);
-    }
+    } else if (entry.end - entry.body >= OBJECT_MIN_BYTES) skippedShapes++;
   }
 
   // A page smaller than a stamp or bigger than a room means the size isn't where it's expected.

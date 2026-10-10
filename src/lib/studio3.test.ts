@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseStudio3, Studio3Error, writeStudio3, type Studio3Document, type Studio3Placement } from "./studio3";
+import { flatten, parseStudio3, Studio3Error, writeStudio3, type PathPoint, type Studio3Document, type Studio3Placement } from "./studio3";
 import fixtureDataUrl from "./fixtures/six-stickers.studio3?inline";
 
 // A file saved by Silhouette Studio 5.0.539: six copies of one traced sticker on a Letter page.
@@ -144,5 +144,45 @@ describe("writeStudio3", () => {
     expect(() => writeStudio3(doc, [{ index: 6, x: 0, y: 0, scaleX: 1, scaleY: 1 }])).toThrow(Studio3Error);
     const [first] = inPlace(doc);
     expect(() => writeStudio3(doc, [first, first])).toThrow(Studio3Error);
+  });
+});
+
+describe("what it leaves out", () => {
+  it("counts a sticker whose artwork isn't a format a browser can draw, and keeps it in the file", () => {
+    const bytes = fixture.slice();
+    const at = bytes.findIndex((_, i) => bytes[i] === 0x89 && bytes[i + 1] === 0x50 && bytes[i + 2] === 0x4e && bytes[i + 3] === 0x47); // the image store's PNG
+    bytes[at] = 0x00;
+    const doc = parseStudio3(bytes);
+    expect(doc.stickers).toHaveLength(0);
+    expect(doc.skippedShapes).toBe(6);
+    // Nothing is placed, so nothing is deleted: the file comes back untouched.
+    expect(writeStudio3(doc, [])).toEqual(bytes);
+  });
+
+  it("counts an object it can't read, but not the layers around the stickers", () => {
+    const original = parseStudio3(fixture);
+    expect(original.skippedShapes).toBe(0);
+    const bytes = fixture.slice();
+    // A transform that isn't a plain scale and move, as a sticker with a skew or perspective has.
+    new DataView(bytes.buffer).setFloat32(original.source.records[0].matrixAt + 32, 2, true);
+    const doc = parseStudio3(bytes);
+    expect(doc.stickers).toHaveLength(5);
+    expect(doc.skippedShapes).toBe(1);
+  });
+});
+
+describe("flatten", () => {
+  it("cuts a long curve into pieces no longer than half a millimetre", () => {
+    const k = 0.5523 * 50; // a quarter of a circle of radius 50 mm
+    const points: PathPoint[] = [
+      { x: 50, y: 0, inX: 0, inY: 0, outX: 0, outY: k },
+      { x: 0, y: 50, inX: k, inY: 0, outX: 0, outY: 0 },
+    ];
+    const line = flatten(points);
+    const arc = line.slice(0, line.findIndex(([x, y]) => x === 0 && y === 50) + 1);
+    expect(arc.length).toBeGreaterThan(100);
+    for (let i = 1; i < arc.length; i++) {
+      expect(Math.hypot(arc[i][0] - arc[i - 1][0], arc[i][1] - arc[i - 1][1])).toBeLessThanOrEqual(0.55);
+    }
   });
 });

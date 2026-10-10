@@ -77,14 +77,20 @@ files and is deliberately narrow:
 - **Import** reads files saved by Silhouette Studio 5. It brings in stickers — an image with a
   cut outline around it, such as a traced PNG — along with the page size. The outline comes from
   the file, so the Offset Margin control doesn't apply to imported stickers. Other objects
-  (text, plain shapes, rotated or mirrored stickers) aren't shown yet.
+  (text, plain shapes, rotated or mirrored stickers, artwork in a format a browser can't draw)
+  aren't shown yet; the status line says how many were left out.
+- **Placement is automatic.** A sticker closer to the edge than the cutter can reach, or sitting on
+  a registration mark, is moved the shortest distance that fixes it, and the packer keeps added
+  stickers the usual gap away from every side of the imported ones. There's nothing to confirm.
 - **Export** writes your changes back into the file you imported: stickers you moved, resized or
   deleted. Everything it doesn't touch — layers, cut settings, objects it couldn't show — is kept
   byte for byte, so nothing is lost on the way back to Studio. Stickers added in Shadow Garage
   can't be written to a `.studio3` yet, and neither can a sheet that didn't start from one; use
   **Download SVG** for those.
 - The file's stored preview thumbnail isn't redrawn, so a file browser may show the old layout
-  until Studio saves the file again.
+  until Studio saves the file again. Studio also keeps a cached cut job in the file that isn't
+  updated either, and that hasn't been checked against a real file with a saved cut job: after
+  opening an exported file in Studio, look at the cut preview before sending it.
 
 ## Supported cutters
 
