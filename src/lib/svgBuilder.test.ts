@@ -40,4 +40,25 @@ describe("buildSheetSVG", () => {
     expect(svg).toContain('<g transform="translate(120.000 50.000) rotate(90)"><image href="data:," x="2.000" y="1.000"');
     expect(svg).toContain('d="M120.000,50.000 L120.000,90.000 100.000,90.000 100.000,50.000 Z"');
   });
+
+  it("can clip artwork to the cut line, with a clip path of its own for every sticker drawn", () => {
+    const design: DesignResult = {
+      cutContoursMM: [[[0, 0], [40, 0], [40, 20], [0, 20]]],
+      imagePlacementMM: { x: -5, y: -5, width: 50, height: 30 }, // the image is bigger than the sticker
+      actualWmm: 40,
+      actualHmm: 20,
+    };
+    const opts = { imageDataUrl: "data:,", borderColor: "#fff", cutStrokeWidthMm: 0.1, showBorder: false };
+    expect(buildSheetSVG([{ design, x: 10, y: 10, opts }], letter)).not.toContain("clipPath");
+
+    const item = { design, x: 10, y: 10, opts: { ...opts, clipArtwork: true } };
+    const svg = buildSheetSVG([item, { ...item, x: 60 }], letter);
+    const ids = [...svg.matchAll(/<clipPath id="([^"]+)"><path d="([^"]+)" clip-rule="evenodd"\/><\/clipPath><g clip-path="url\(#([^)]+)\)"><image /g)];
+    expect(ids).toHaveLength(2);
+    expect(ids[0][2]).toBe("M10.000,10.000 L50.000,10.000 50.000,30.000 10.000,30.000 Z");
+    expect(ids[0][1]).toBe(ids[0][3]);
+    expect(ids[1][1]).not.toBe(ids[0][1]);
+    // a second build (the copy sent to the printer) must not reuse the first one's ids
+    expect(buildSheetSVG([item], letter)).not.toContain(`id="${ids[0][1]}"`);
+  });
 });

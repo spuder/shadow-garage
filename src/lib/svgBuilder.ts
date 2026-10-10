@@ -10,7 +10,14 @@ export interface RenderOptions {
   borderColor: string; // fill shown in the margin between artwork edge and cut line (driven by the selected paper type)
   cutStrokeWidthMm: number;
   showBorder: boolean;
+  // Hide artwork outside the cut line. For images with an opaque background, whose rectangle
+  // would otherwise cover whatever sits beside the sticker.
+  clipArtwork?: boolean;
 }
+
+// Clip paths are referenced by id, and two SVGs built here can be in the page at once (the
+// preview and the copy being printed), so each clip path gets an id of its own.
+let clipSerial = 0;
 
 /**
  * Markup for a single sticker (border fill + image + cut outline), translated so its bbox origin
@@ -27,11 +34,16 @@ function stickerGroup(design: DesignResult, x: number, y: number, opts: RenderOp
   // The cut path above is rotated point by point; the raster gets the same quarter turn as a transform.
   const [ix, iy] = rotated ? [img.x, img.y] : [x + img.x, y + img.y];
   const image = `<image href="${opts.imageDataUrl}" x="${ix.toFixed(3)}" y="${iy.toFixed(3)}" width="${img.width.toFixed(3)}" height="${img.height.toFixed(3)}" preserveAspectRatio="none"/>`;
-  printParts.push(rotated ? `<g transform="translate(${(x + design.actualHmm).toFixed(3)} ${y.toFixed(3)}) rotate(90)">${image}</g>` : image);
+  let art = rotated ? `<g transform="translate(${(x + design.actualHmm).toFixed(3)} ${y.toFixed(3)}) rotate(90)">${image}</g>` : image;
+  if (opts.clipArtwork) {
+    const id = `clip-${++clipSerial}`;
+    art = `<clipPath id="${id}"><path d="${d}" clip-rule="evenodd"/></clipPath><g clip-path="url(#${id})">${art}</g>`;
+  }
+  printParts.push(art);
 
   const cut = `<path id="cut-${index}" d="${d}" fill="none" stroke="${CUT_LINE_COLOR}" stroke-width="${opts.cutStrokeWidthMm}"/>`;
 
-  return { print: `<g>${printParts.join("")}</g>`, cut };
+  return { print: `<g id="art-${index}">${printParts.join("")}</g>`, cut };
 }
 
 /**

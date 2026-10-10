@@ -1,10 +1,12 @@
 import "./style.css";
 import { extractAlphaMask, type RawMask } from "./lib/trace";
-import { computeDesign, type DesignResult } from "./lib/design";
-import { SHEET_SIZES, packMixedSheet, type MixedPlacement, type SheetSize } from "./lib/sheet";
+import { computeDesign, scaleDesign, type DesignResult } from "./lib/design";
+import { translateContours } from "./lib/geometry";
+import { SHEET_SIZES, packMixedSheet, type KeepoutRect, type MixedPlacement, type SheetSize } from "./lib/sheet";
 import { buildSingleStickerSVG, buildSheetSVG, type RenderOptions, type SheetItem } from "./lib/svgBuilder";
 import { getRegmarkKeepoutRects, REGMARK_ORIGIN_MM } from "./lib/regmarks";
-import { downloadSvgString } from "./lib/download";
+import { downloadBlob, downloadSvgString } from "./lib/download";
+import { parseStudio3, writeStudio3, type Studio3Document } from "./lib/studio3";
 import { printSvg } from "./lib/print";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
@@ -46,7 +48,7 @@ interface StickerDesign {
   id: string;
   fileName: string;
   imageDataUrl: string;
-  raw: RawMask;
+  raw: RawMask | null; // the artwork's alpha mask, for tracing; null when the outline was imported instead
   artworkAspect: number;
   widthMm: number;
   heightMm: number;
@@ -55,6 +57,10 @@ interface StickerDesign {
   marginMm: number; // space around the artwork, per sticker
   preserveSharpCorners: boolean;
   design: DesignResult | null;
+  // Set for a sticker read from a .studio3 file: its outline and artwork at the size they have
+  // there, and which of the file's stickers it is (for writing the file back).
+  imported: { base: DesignResult; studio3Index: number } | null;
+  pinned: { x: number; y: number } | null; // its own spot on the sheet (top-left); the packer works around it
 }
 
 interface AppState {
@@ -81,6 +87,8 @@ interface AppState {
   editingPlacementXY: { x: number; y: number; rotated: boolean } | null; // where the selected design's edited instance sits on the sheet (sheet tab only)
   needsRefit: boolean;
   lastPlacements: MixedPlacement[];
+  studio3: { doc: Studio3Document; fileName: string } | null; // the imported file that Export writes back
+  studio3Status: { text: string; error: boolean } | null;
   cutter: CutterUiState;
 }
 
@@ -108,6 +116,8 @@ const state: AppState = {
   editingPlacementXY: null,
   needsRefit: true,
   lastPlacements: [],
+  studio3: null,
+  studio3Status: null,
   cutter: { session: null, connecting: false, job: null, statusText: null, error: null, log: null, manualRetryKind: null, manualRetryDryRun: false, jog: null, jogStepMm: 1, busyOp: false },
 };
 
@@ -115,6 +125,10 @@ applyTheme(state.theme);
 
 // ---- element refs ----
 const fileInput = document.getElementById("fileInput") as HTMLInputElement;
+const studio3Input = document.getElementById("studio3Input") as HTMLInputElement;
+const importStudio3Btn = document.getElementById("importStudio3Btn") as HTMLButtonElement;
+const exportStudio3Btn = document.getElementById("exportStudio3Btn") as HTMLButtonElement;
+const studio3StatusEl = document.getElementById("studio3Status") as HTMLDivElement;
 const dropzone = document.getElementById("dropzone") as HTMLDivElement;
 const previewHost = document.getElementById("previewHost") as HTMLDivElement;
 const viewportInner = document.getElementById("viewportInner") as HTMLDivElement;
@@ -210,12 +224,13 @@ const zoomInBtn = document.getElementById("zoomInBtn") as HTMLButtonElement;
 const zoomFitBtn = document.getElementById("zoomFitBtn") as HTMLButtonElement;
 
 // ---- static option lists ----
-SHEET_SIZES.forEach((s, i) => {
+function addSheetOption(s: SheetSize, i: number) {
   const opt = document.createElement("option");
   opt.value = String(i);
   opt.textContent = `${s.name} (${(s.widthMm / MM_PER_IN).toFixed(1)} × ${(s.heightMm / MM_PER_IN).toFixed(1)} in)`;
   sheetSelect.appendChild(opt);
-});
+}
+SHEET_SIZES.forEach(addSheetOption);
 
 // Grouped so it's obvious which stocks are adhesive sticker sheets and which are plain paper.
 const PAPER_GROUPS = [
@@ -252,7 +267,7 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function readAsDataURL(file: File): Promise<string> {
+function readAsDataURL(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -300,6 +315,7 @@ function renderOptionsFor(design: StickerDesign): RenderOptions {
     borderColor: pt.exportColor,
     cutStrokeWidthMm: 0.15,
     showBorder: pt.showBorder,
+    clipArtwork: !!design.imported, // Studio files often hold artwork with a solid background
   };
 }
 
@@ -322,30 +338,69 @@ function packingMarginMm(): number {
   return state.regmarksEnabled ? Math.max(state.sheetMarginMm, REGMARK_ORIGIN_MM + 2) : state.sheetMarginMm;
 }
 
-/** Packs the current designs onto the current sheet and resolves each placement to a renderable SheetItem. */
-function computeSheetItems(sheet: SheetSize): { placements: MixedPlacement[]; items: SheetItem[] } {
-  const mixedItems = state.designs
-    .filter((d) => d.design)
-    .map((d) => ({ id: d.id, widthMm: d.design!.actualWmm, heightMm: d.design!.actualHmm }));
-  // Registration marks only occupy small squares at their corners, not a full-width/height band —
-  // route packing around just those squares rather than shrinking the whole usable area from
-  // every edge (see getRegmarkKeepoutRects).
-  const keepouts = state.regmarksEnabled ? getRegmarkKeepoutRects(sheet.widthMm, sheet.heightMm, state.regmarkStyle === "four_corner") : [];
-  const placements = packMixedSheet(sheet, mixedItems, state.gapMm, packingMarginMm(), state.fillMode, keepouts, state.allowRotation);
-  const items: SheetItem[] = placements
+/** Resolves placements to renderable SheetItems, in the same order. */
+function sheetItemsFor(placements: MixedPlacement[]): SheetItem[] {
+  return placements
     .map((p) => {
       const d = state.designs.find((dd) => dd.id === p.id);
       if (!d || !d.design) return null;
       return { design: d.design, x: p.x, y: p.y, rotated: p.rotated, opts: renderOptionsFor(d) } as SheetItem;
     })
     .filter((x): x is SheetItem => x !== null);
-  return { placements, items };
+}
+
+/** A pinned sticker's bounding box on the sheet. */
+function pinnedRect(d: StickerDesign): KeepoutRect {
+  return { x: d.pinned!.x, y: d.pinned!.y, w: d.design!.actualWmm, h: d.design!.actualHmm };
+}
+
+function rectsOverlap(a: KeepoutRect, b: KeepoutRect): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/**
+ * Lays the current designs out on the current sheet and resolves each placement to a renderable
+ * SheetItem. Pinned stickers stay where they are; the rest are packed into the space around them.
+ */
+function computeSheetItems(sheet: SheetSize): { placements: MixedPlacement[]; items: SheetItem[] } {
+  const ready = state.designs.filter((d) => d.design);
+  const pinned = ready.filter((d) => d.pinned);
+  const mixedItems = ready.filter((d) => !d.pinned).map((d) => ({ id: d.id, widthMm: d.design!.actualWmm, heightMm: d.design!.actualHmm }));
+  // Registration marks only occupy small squares at their corners, not a full-width/height band —
+  // route packing around just those squares rather than shrinking the whole usable area from
+  // every edge (see getRegmarkKeepoutRects).
+  const keepouts = state.regmarksEnabled ? getRegmarkKeepoutRects(sheet.widthMm, sheet.heightMm, state.regmarkStyle === "four_corner") : [];
+  // The packer leaves the gap above and beside a keepout but not below it, so pinned ones are made that much taller.
+  for (const d of pinned) keepouts.push({ ...pinnedRect(d), h: d.design!.actualHmm + state.gapMm });
+  const placements: MixedPlacement[] = [
+    ...pinned.map((d) => ({ id: d.id, x: d.pinned!.x, y: d.pinned!.y, rotated: false })),
+    ...packMixedSheet(sheet, mixedItems, state.gapMm, packingMarginMm(), state.fillMode, keepouts, state.allowRotation),
+  ];
+  return { placements, items: sheetItemsFor(placements) };
+}
+
+/** Problems with where pinned stickers sit, for the sheet summary; "" when there are none. */
+function pinnedWarning(sheet: SheetSize): string {
+  const pinned = state.designs.filter((d) => d.design && d.pinned).map(pinnedRect);
+  const offSheet = pinned.filter((r) => r.x < 0 || r.y < 0 || r.x + r.w > sheet.widthMm || r.y + r.h > sheet.heightMm).length;
+  const marks = state.regmarksEnabled ? getRegmarkKeepoutRects(sheet.widthMm, sheet.heightMm, state.regmarkStyle === "four_corner") : [];
+  const onMarks = pinned.filter((r) => marks.some((m) => rectsOverlap(r, m))).length;
+  const parts: string[] = [];
+  if (offSheet > 0) parts.push(`${offSheet} off the sheet`);
+  if (onMarks > 0) parts.push(`${onMarks} too close to a registration mark — drag ${onMarks === 1 ? "it" : "them"} clear`);
+  return parts.join(", ");
+}
+
+/** Traces the sticker's artwork at its current size, or resizes the outline it was imported with. */
+function buildDesign(d: StickerDesign, aspectLocked = d.aspectLocked, driveBy = d.driveBy): DesignResult {
+  if (d.imported) return scaleDesign(d.imported.base, d.widthMm, d.heightMm, aspectLocked, driveBy);
+  return computeDesign(d.raw!, d.widthMm, d.heightMm, d.marginMm, aspectLocked, driveBy, d.preserveSharpCorners);
 }
 
 // ---- core recompute ----
 function recompute() {
   for (const d of state.designs) {
-    d.design = computeDesign(d.raw, d.widthMm, d.heightMm, d.marginMm, d.aspectLocked, d.driveBy, d.preserveSharpCorners);
+    d.design = buildDesign(d);
     // Keep the stored target in sync with what was actually achieved, so the next edit (a drag,
     // another text-box change) starts from reality instead of a stale/approximate guess.
     d.widthMm = d.design.actualWmm;
@@ -357,12 +412,7 @@ function recompute() {
 // ---- rendering ----
 function render() {
   // paper/sheet/margin/gap/fillMode control mirrors
-  const selForMargin = selectedDesign();
-  const margin = selForMargin?.marginMm ?? state.marginMm;
-  if (document.activeElement !== marginInput) marginInput.value = margin.toFixed(1);
-  marginSlider.value = String(margin);
-  sharpCornersToggle.checked = selForMargin?.preserveSharpCorners ?? state.preserveSharpCorners;
-  marginForEl.textContent = selForMargin && state.designs.length > 1 ? `for ${selForMargin.fileName}` : "";
+  syncSelectionControls();
   gapValue.textContent = state.gapMm.toFixed(1);
   sheetSelect.value = String(state.sheetIndex);
   fillModeToggle.querySelectorAll("button").forEach((b) => {
@@ -383,9 +433,6 @@ function render() {
   removeImageBtn.disabled = !hasImages;
 
   const sel = selectedDesign();
-  fileNameEl.textContent = sel ? sel.fileName : "—";
-
-  syncSizeInputs(sel);
   renderThumbStrip();
 
   const sheet = currentSheet();
@@ -395,6 +442,7 @@ function render() {
 
   downloadSvgBtn.disabled = !hasImages;
   printBtn.disabled = !hasImages;
+  renderStudio3();
   renderCutter();
 
   if (!hasImages) {
@@ -430,8 +478,39 @@ function render() {
     } else {
       overlayLayer.innerHTML = "";
     }
-    summaryEl.textContent = `${placements.length} pcs on ${sheet.name}`;
+    const warning = pinnedWarning(sheet);
+    summaryEl.textContent = `${placements.length} pcs on ${sheet.name}${warning ? ` · ${warning}` : ""}`;
   }
+}
+
+/** The side-panel fields that follow the selected sticker: its name, size and margin. */
+function syncSelectionControls() {
+  const sel = selectedDesign();
+  fileNameEl.textContent = sel ? sel.fileName : "—";
+  syncSizeInputs(sel);
+
+  const margin = sel?.marginMm ?? state.marginMm;
+  if (document.activeElement !== marginInput) marginInput.value = margin.toFixed(1);
+  marginSlider.value = String(margin);
+  sharpCornersToggle.checked = sel?.preserveSharpCorners ?? state.preserveSharpCorners;
+  // An imported sticker keeps the outline it came with, so there's no margin to trace it at.
+  const outlineImported = !!sel?.imported;
+  marginInput.disabled = marginSlider.disabled = sharpCornersToggle.disabled = outlineImported;
+  marginForEl.textContent = outlineImported
+    ? "— this sticker keeps the outline from its .studio3 file"
+    : sel && state.designs.length > 1
+      ? `for ${sel.fileName}`
+      : "";
+}
+
+function renderStudio3() {
+  exportStudio3Btn.disabled = !state.studio3;
+  exportStudio3Btn.title = state.studio3
+    ? `Save ${state.studio3.fileName} with the stickers where they are now`
+    : "Import a .studio3 file first — Export writes your changes back into it";
+  studio3StatusEl.hidden = !state.studio3Status;
+  studio3StatusEl.textContent = state.studio3Status?.text ?? "";
+  studio3StatusEl.classList.toggle("cutter-error", !!state.studio3Status?.error);
 }
 
 function renderThumbStrip() {
@@ -603,8 +682,11 @@ previewHost.addEventListener("pointerdown", (e) => {
       state.selectedDesignId = hit.id;
       state.editingSelected = true;
       state.editingPlacementXY = { x: hit.x, y: hit.y, rotated: hit.rotated };
-      renderOverlay(selectedDesign());
+      const sel = selectedDesign();
+      syncSelectionControls();
+      renderOverlay(sel);
       renderThumbStrip();
+      if (sel?.pinned) startMove(e, sel);
       return;
     }
   }
@@ -798,21 +880,18 @@ function startResize(e: PointerEvent, design: StickerDesign, hd: (typeof HANDLE_
 
     design.widthMm = newW;
     design.heightMm = newH;
-    design.design = computeDesign(design.raw, design.widthMm, design.heightMm, design.marginMm, true, "width", design.preserveSharpCorners);
+    design.design = buildDesign(design, true, "width");
+    if (design.pinned && state.activeTab === "sheet") {
+      // Nothing repacks a pinned sticker, so the corner opposite the handle is held where it is.
+      movePinned(design, anchorMm[0] - hd.anchor[0] * design.design.actualWmm, anchorMm[1] - hd.anchor[1] * design.design.actualHmm);
+    }
 
     // Live feedback: redraw in place without re-packing the sheet (positions would otherwise
     // jump around mid-drag as siblings reflow) — the real repack happens once on release.
     if (state.activeTab === "design") {
       viewportInner.innerHTML = toScreenSVG(buildSingleStickerSVG(design.design, renderOptionsFor(design)));
     } else {
-      const items: SheetItem[] = state.lastPlacements
-        .map((p) => {
-          const d = state.designs.find((dd) => dd.id === p.id);
-          if (!d || !d.design) return null;
-          return { design: d.design, x: p.x, y: p.y, rotated: p.rotated, opts: renderOptionsFor(d) } as SheetItem;
-        })
-        .filter((x): x is SheetItem => x !== null);
-      viewportInner.innerHTML = toScreenSVG(buildSheetSVG(items, sheetAtStart, currentRegmarkStyle()));
+      viewportInner.innerHTML = toScreenSVG(buildSheetSVG(sheetItemsFor(state.lastPlacements), sheetAtStart, currentRegmarkStyle()));
     }
     applyCameraTransform();
     renderOverlay(design);
@@ -829,10 +908,176 @@ function startResize(e: PointerEvent, design: StickerDesign, hd: (typeof HANDLE_
   window.addEventListener("pointerup", onUp);
 }
 
+// ---- drag a pinned sticker around the sheet ----
+/** Moves a pinned sticker, keeping the sheet's current layout and the selection overlay in step. */
+function movePinned(design: StickerDesign, x: number, y: number) {
+  design.pinned = { x, y };
+  const placement = state.lastPlacements.find((p) => p.id === design.id);
+  if (placement) {
+    placement.x = x;
+    placement.y = y;
+  }
+  if (state.selectedDesignId === design.id && state.editingPlacementXY) state.editingPlacementXY = { x, y, rotated: false };
+}
+
+function startMove(e: PointerEvent, design: StickerDesign) {
+  if (!design.pinned || !design.design) return;
+  e.preventDefault();
+  const index = state.lastPlacements.findIndex((p) => p.id === design.id);
+  const rect = previewHost.getBoundingClientRect();
+  const sheet = currentSheet();
+  const [startX, startY] = screenToMm(state.camera, e.clientX - rect.left, e.clientY - rect.top);
+  const from = design.pinned;
+  const maxX = Math.max(0, sheet.widthMm - design.design.actualWmm);
+  const maxY = Math.max(0, sheet.heightMm - design.design.actualHmm);
+  let moved = false;
+
+  function onMove(ev: PointerEvent) {
+    const [mmX, mmY] = screenToMm(state.camera, ev.clientX - rect.left, ev.clientY - rect.top);
+    const x = clamp(from.x + mmX - startX, 0, maxX);
+    const y = clamp(from.y + mmY - startY, 0, maxY);
+    movePinned(design, x, y);
+    moved = true;
+    // Live feedback: slide the drawn sticker along instead of rebuilding the sheet on every
+    // move; the real redraw (and repack of anything around it) happens once on release.
+    const shift = `translate(${x - from.x} ${y - from.y})`;
+    viewportInner.querySelector(`#art-${index}`)?.setAttribute("transform", shift);
+    viewportInner.querySelector(`#cut-${index}`)?.setAttribute("transform", shift);
+    renderOverlay(design);
+  }
+
+  function onUp() {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+    if (moved) render();
+  }
+
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+}
+
+// ---- Silhouette Studio files ----
+function isStudio3File(file: File): boolean {
+  return /\.studio3$/i.test(file.name);
+}
+
+/** The paper size matching a page, added to the list if it isn't one of the standard ones. */
+function sheetIndexFor(widthMm: number, heightMm: number): number {
+  const found = SHEET_SIZES.findIndex((s) => Math.abs(s.widthMm - widthMm) < 0.5 && Math.abs(s.heightMm - heightMm) < 0.5);
+  if (found >= 0) return found;
+  const custom: SheetSize = { name: "Custom", widthMm, heightMm };
+  addSheetOption(custom, SHEET_SIZES.push(custom) - 1);
+  return SHEET_SIZES.length - 1;
+}
+
+/**
+ * Replaces the sheet with the stickers of a Silhouette Studio file, each one pinned where the
+ * file has it and keeping the file's outline. Returns whether anything was imported.
+ */
+async function importStudio3(file: File): Promise<boolean> {
+  let doc: Studio3Document;
+  try {
+    doc = parseStudio3(new Uint8Array(await file.arrayBuffer()));
+    if (doc.stickers.length === 0) throw new Error("no stickers (artwork with a cut outline) were found in it.");
+  } catch (e) {
+    state.studio3Status = { text: `Couldn't import ${file.name}: ${errorText(e)}`, error: true };
+    renderStudio3();
+    return false;
+  }
+  if (state.designs.length > 0 && !confirm(`Importing ${file.name} replaces the stickers on the current sheet. Continue?`)) return false;
+
+  const imageUrls = new Map<string, string>();
+  for (const { imageId } of doc.stickers) {
+    if (imageUrls.has(imageId)) continue;
+    const image = doc.images.get(imageId)!;
+    imageUrls.set(imageId, await readAsDataURL(new Blob([image.bytes.slice()], { type: image.mime })));
+  }
+
+  const label = file.name.replace(/\.studio3$/i, "");
+  state.designs = doc.stickers.map((s, i) => {
+    const { minX, minY, maxX, maxY } = s.bbox;
+    const base: DesignResult = {
+      cutContoursMM: translateContours(s.contours, -minX, -minY),
+      imagePlacementMM: { x: s.imageRect.x - minX, y: s.imageRect.y - minY, width: s.imageRect.width, height: s.imageRect.height },
+      actualWmm: maxX - minX,
+      actualHmm: maxY - minY,
+    };
+    return {
+      id: uid(),
+      fileName: `${label} #${i + 1}`,
+      imageDataUrl: imageUrls.get(s.imageId)!,
+      raw: null,
+      artworkAspect: s.imageRect.width / s.imageRect.height,
+      widthMm: base.actualWmm,
+      heightMm: base.actualHmm,
+      aspectLocked: true,
+      driveBy: "width",
+      marginMm: state.marginMm,
+      preserveSharpCorners: state.preserveSharpCorners,
+      design: null,
+      imported: { base, studio3Index: i },
+      pinned: { x: minX, y: minY },
+    };
+  });
+  state.studio3 = { doc, fileName: file.name };
+  state.selectedDesignId = state.designs[0].id;
+  state.editingPlacementXY = null;
+  if (doc.pageWidthMm && doc.pageHeightMm) state.sheetIndex = sheetIndexFor(doc.pageWidthMm, doc.pageHeightMm);
+
+  const count = doc.stickers.length;
+  let text = `Imported ${count} sticker${count === 1 ? "" : "s"} from ${file.name}.`;
+  if (doc.skippedShapes > 0) {
+    text += ` ${doc.skippedShapes} other shape${doc.skippedShapes === 1 ? " was" : "s were"} left out (no artwork, or rotated); Export keeps ${doc.skippedShapes === 1 ? "it" : "them"} in the file.`;
+  }
+  state.studio3Status = { text, error: false };
+  showTab("sheet");
+  recompute();
+  return true;
+}
+
+importStudio3Btn.addEventListener("click", () => studio3Input.click());
+studio3Input.addEventListener("change", () => {
+  const file = studio3Input.files?.[0];
+  studio3Input.value = "";
+  if (file) void importStudio3(file);
+});
+
+exportStudio3Btn.addEventListener("click", () => {
+  const source = state.studio3;
+  if (!source) return;
+  // Only stickers that came from the file can be written back to it.
+  const fromFile = state.designs.filter((d) => d.imported && d.pinned && d.design);
+  const added = state.designs.length - fromFile.length;
+  try {
+    const bytes = writeStudio3(
+      source.doc,
+      fromFile.map((d) => ({
+        index: d.imported!.studio3Index,
+        x: d.pinned!.x,
+        y: d.pinned!.y,
+        scaleX: d.design!.actualWmm / d.imported!.base.actualWmm,
+        scaleY: d.design!.actualHmm / d.imported!.base.actualHmm,
+      }))
+    );
+    const name = `${source.fileName.replace(/\.studio3$/i, "")}-edited.studio3`;
+    downloadBlob(new Blob([bytes.slice()], { type: "application/octet-stream" }), name);
+    let text = `Saved ${name} with ${fromFile.length} sticker${fromFile.length === 1 ? "" : "s"}.`;
+    if (added > 0) text += ` ${added} added here ${added === 1 ? "isn't" : "aren't"} in it: only stickers that came from the .studio3 file can be written back.`;
+    state.studio3Status = { text, error: false };
+  } catch (e) {
+    state.studio3Status = { text: `Couldn't export: ${errorText(e)}`, error: true };
+  }
+  renderStudio3();
+});
+
 // ---- image upload ----
 async function handleFiles(files: FileList | File[]) {
   const list = Array.from(files);
-  for (const file of list) {
+  const studio3 = list.find(isStudio3File);
+  if (studio3 && !(await importStudio3(studio3))) return;
+  for (const file of list.filter((f) => !isStudio3File(f))) {
     const dataUrl = await readAsDataURL(file);
     await new Promise<void>((resolve) => {
       const img = new Image();
@@ -857,6 +1102,8 @@ async function handleFiles(files: FileList | File[]) {
           marginMm: state.marginMm,
           preserveSharpCorners: state.preserveSharpCorners,
           design: null,
+          imported: null,
+          pinned: null,
         };
         state.designs.push(design);
         state.selectedDesignId = design.id;
@@ -976,12 +1223,16 @@ regmarkStyleToggle.addEventListener("click", (e) => {
 });
 
 // ---- tabs ----
+function showTab(tab: Tab) {
+  state.activeTab = tab;
+  state.needsRefit = true;
+  state.editingSelected = false;
+  tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+}
+
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
-    state.activeTab = tab.dataset.tab as Tab;
-    state.needsRefit = true;
-    state.editingSelected = false;
-    tabs.forEach((t) => t.classList.toggle("active", t === tab));
+    showTab(tab.dataset.tab as Tab);
     render();
   });
 });
