@@ -102,6 +102,28 @@
             </div>
 
             <div class="panel-block">
+              <div class="block-title">Color Adjust <span id="colorAdjustNote" class="block-title-note"></span></div>
+              <label class="field-label">
+                Brightness: <span id="brightnessValue">0</span>
+                <input id="brightnessSlider" type="range" min="-60" max="40" step="1" value="0" />
+              </label>
+              <label class="field-label">
+                Pale tints: <span id="paleTintsValue">0</span>
+                <input id="paleTintsSlider" type="range" min="0" max="100" step="1" value="0" />
+              </label>
+              <label class="field-label">
+                Contrast: <span id="contrastValue">0</span>
+                <input id="contrastSlider" type="range" min="-50" max="50" step="1" value="0" />
+              </label>
+              <label class="field-label">
+                Saturation: <span id="saturationValue">0</span>
+                <input id="saturationSlider" type="range" min="-100" max="100" step="1" value="0" />
+              </label>
+              <button id="colorAdjustResetBtn" class="btn-secondary small" type="button" style="margin-top: 6px;">Reset to Paper Type</button>
+              <div class="hint-text">Applied to the artwork in the preview, print and SVG export. Inkjet ink is see-through on holographic and clear stock, so pale colors barely show. Pale tints darkens light colors while leaving dark ones mostly alone; Brightness darkens everything.</div>
+            </div>
+
+            <div class="panel-block">
               <div class="block-title">Paper Size</div>
               <select id="sheetSelect"></select>
             </div>
@@ -175,7 +197,7 @@
                 <button id="calCutBtn" class="btn-secondary small" disabled>Calibration cut</button>
                 <button id="dryRunBtn" class="btn-secondary small" disabled title="Scan the marks, then trace the sheet's outlines with the blade raised">Dry run</button>
               </div>
-              <div class="hint-text"><strong>Load the mat before sending</strong> — the Cameo 3 reports "ready" even with no mat, so the app can't check for you. Silhouette Cameo 3 over USB or Bluetooth · AutoBlade. Cuts the sheet as laid out in Sheet Preview. Test cut is a 10&nbsp;mm square on scrap (no marks). To check print-and-cut alignment, print the calibration sheet at 100% and run the calibration cut on it. <strong>Dry run</strong> does everything for the sheet, including the mark scan, but traces the outlines with the blade raised — watch where it goes before cutting.</div>
+              <div class="hint-text"><strong>Load the mat before sending</strong> — the Cameo 3 reports "ready" even with no mat, so the app can't check for you. Silhouette Cameo 3 or 4 over USB or Bluetooth · AutoBlade. Cuts the sheet as laid out in Sheet Preview. Test cut is a 10&nbsp;mm square on scrap (no marks). To check print-and-cut alignment, print the calibration sheet at 100% and run the calibration cut on it. <strong>Dry run</strong> does everything for the sheet, including the mark scan, but traces the outlines with the blade raised — watch where it goes before cutting.</div>
               <div id="cutterError" class="hint-text cutter-error" hidden></div>
               <div id="rawBlock" class="raw-block" hidden>
                 <div class="hint-text">Diagnostics — raw commands, one per line (<code>&lt;ESC EOT&gt;</code> and <code>&lt;ESC ENQ&gt;</code> for escapes). Replies show below and in the log.</div>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { cameo3Responder, FakeTransport } from "./fakeTransport";
-import { bluetoothServiceClassIds, modelById, modelForBluetoothFirmware, SERIAL_PORT_PROFILE_UUID } from "./models";
+import { STICKER_PAPER } from "./materials";
+import { bluetoothServiceClassIds, modelById, modelForBluetoothFirmware, provisionalBluetoothModel, SERIAL_PORT_PROFILE_UUID } from "./models";
 import { CutterSession } from "./session";
 import { LoggingTransport, TransportClosedError, TransportTimeoutError } from "./transport";
 import { describePort, identifyBluetoothModel, WebSerialTransport, type SerialPortLike } from "./webSerialTransport";
@@ -87,12 +88,15 @@ describe("Bluetooth model identification", () => {
     expect(bluetoothServiceClassIds()).toEqual([SERIAL_PORT_PROFILE_UUID]);
   });
 
-  it("matches the firmware prefix, and otherwise assumes the only Bluetooth model", () => {
+  it("matches the firmware prefix, and assumes the Cameo 3 when the reply names no model", () => {
     expect(modelForBluetoothFirmware("CAMEO3 V1.40")).toMatchObject({ model: { id: "silhouette-cameo3" }, guessed: false });
     expect(modelForBluetoothFirmware("cameo 3 v1.40")?.guessed).toBe(false);
+    expect(modelForBluetoothFirmware("CAMEO 4 V1.10")).toMatchObject({ model: { id: "silhouette-cameo4" }, guessed: false });
     expect(modelForBluetoothFirmware("CAMEO V1.10")).toMatchObject({ model: { id: "silhouette-cameo3" }, guessed: true });
+    expect(modelForBluetoothFirmware("CAMEO 5 V1.00")).toBeUndefined();
     // The advertised BLE name names the model when the firmware reply doesn't.
     expect(modelForBluetoothFirmware("CAMEO V1.10", "CAMEO3-30411C")?.guessed).toBe(false);
+    expect(modelForBluetoothFirmware("CAMEO V1.10", "CAMEO 4")).toMatchObject({ model: { id: "silhouette-cameo4" }, guessed: false });
   });
 
   it("notes a guessed model in the log", () => {
@@ -109,6 +113,19 @@ describe("Bluetooth model identification", () => {
     expect(session.firmware).toBe("CAMEO V1.10");
     expect(t.log).toEqual(["<ESC EOT>", "FG", "TB71", "FA", "TC"]);
     expect(session.log.format()).toMatch(/identified: Silhouette Cameo 3/);
+  });
+
+  it("drives a Cameo 4 as one after the provisional Cameo 3 handshake", async () => {
+    const cutter = cameo3Responder();
+    const t = new FakeTransport((w) => (w === "FG\x03" ? "CAMEO 4 V1.20\x03" : cutter(w)));
+    const session = await CutterSession.openAndIdentify(t, provisionalBluetoothModel()!, identifyBluetoothModel);
+    expect(session.model.id).toBe("silhouette-cameo4");
+    expect(t.log).toEqual(["<ESC EOT>", "FG", "TB71", "FA", "TC"]); // the one TC a Cameo 4 gets
+    t.writes.length = 0;
+    await session.run({ paths: [], material: STICKER_PAPER, frame: { offsetXmm: 0, offsetYmm: 0, clip: { minX: 0, minY: 0, maxX: 100, maxY: 100 } }, regmarks: null });
+    expect(t.log).not.toContain("TC");
+    expect(t.log).toContain("<ESC NAK>");
+    expect(t.log).toContain("TJ3");
   });
 
   it("closes the link when the cutter isn't supported", async () => {
