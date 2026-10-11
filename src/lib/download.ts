@@ -1,5 +1,8 @@
 export function downloadSvgString(svgMarkup: string, filename: string) {
-  const blob = new Blob([svgMarkup], { type: "image/svg+xml" });
+  downloadBlob(new Blob([svgMarkup], { type: "image/svg+xml" }), filename);
+}
+
+export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

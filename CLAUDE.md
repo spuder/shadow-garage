@@ -42,6 +42,19 @@ step. Vite's `base` is `/shadow-garage/`, so the dev URL is
   and cut lines can be omitted for print (`includeCutLines`).
 - `print.ts` prints by swapping the SVG into `#printArea` and relying on the `@media print`
   rules in `style.css`.
+- `studio3.ts` reads Silhouette Studio `.studio3` files and writes edits back into them. The
+  format is undocumented; the file's header comment is the only description of it, so keep that
+  comment in step with the code. Writing patches the imported bytes in place (move, resize) or
+  cuts records out (delete) and passes everything else through, which is why an unchanged export
+  is byte-identical. It cannot build a file from scratch. `studio3.test.ts` runs against
+  `fixtures/six-stickers.studio3`, a real Studio 5 document with placeholder artwork.
+
+**Imported stickers** (`StickerDesign.imported` / `.pinned` in `main.ts`) keep the outline from
+their file instead of being traced (`scaleDesign()` in `design.ts` resizes it), and are *pinned*:
+they sit where the file put them or where the user dragged them, and `computeSheetItems()` passes
+their boxes to the packer as keep-outs so other stickers flow around them. Their artwork is
+clipped to the cut line (`RenderOptions.clipArtwork`), since Studio files usually hold images
+with a solid background.
 
 **`src/main.ts`** holds all UI: one mutable `state` object, a `recompute()` → `render()` cycle,
 and the camera/pointer handling (pan, zoom, corner-drag resize, via `camera.ts`) plus the Cutter

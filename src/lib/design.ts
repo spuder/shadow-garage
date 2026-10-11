@@ -105,6 +105,29 @@ export function computeDesign(
 }
 
 /**
+ * A design whose outline came from a file instead of a trace, resized to the target. As in
+ * computeDesign, preserving the aspect hits the driving axis exactly and lets the other follow.
+ */
+export function scaleDesign(
+  base: DesignResult,
+  targetWmm: number,
+  targetHmm: number,
+  preserveAspect = true,
+  driveBy: "width" | "height" = "width"
+): DesignResult {
+  let scaleX = targetWmm / base.actualWmm;
+  let scaleY = targetHmm / base.actualHmm;
+  if (preserveAspect) scaleX = scaleY = driveBy === "width" ? scaleX : scaleY;
+  const img = base.imagePlacementMM;
+  return {
+    cutContoursMM: scaleContours(base.cutContoursMM, scaleX, scaleY),
+    imagePlacementMM: { x: img.x * scaleX, y: img.y * scaleY, width: img.width * scaleX, height: img.height * scaleY },
+    actualWmm: base.actualWmm * scaleX,
+    actualHmm: base.actualHmm * scaleY,
+  };
+}
+
+/**
  * A design's cut contours as placed on a sheet, with the placed bounding box's top-left at (x, y).
  * `rotated` turns the sticker a quarter turn clockwise first. The SVG and the cutter both use
  * this, so what's cut always matches what's drawn.

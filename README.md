@@ -45,7 +45,7 @@ registration marks), or any other script that talks to the cutter.
 ## What it does
 
 - **Upload one or more images** (PNG, JPEG, or SVG) — drag-and-drop or multi-select, with a
-  thumbnail strip to manage them.
+  thumbnail strip to manage them — or open a Silhouette Studio `.studio3` file.
 - **Auto-traces a die-cut outline** around the artwork's alpha silhouette, with a margin/bleed
   you control. Disconnected pieces (separate letters in a wordmark, for example) get merged into
   one cuttable path; interior holes (the counter of an "O") are correctly left uncut, matching
@@ -55,6 +55,11 @@ registration marks), or any other script that talks to the cutter.
   side panel with an aspect-ratio lock (or unlock it to deliberately stretch).
 - **Pack multiple stickers onto a sheet** (Letter / A4 / A3) — one of each, or auto-filled to
   cover the page — with a live preview and per-sticker delete/resize right on the sheet.
+- **Import Silhouette Studio `.studio3` files** — every sticker in the file (artwork plus its cut
+  outline) arrives as its own object, exactly where Studio had it, instead of one flattened
+  picture. Drag stickers around the sheet, resize or delete them, add more images beside them,
+  then print and cut from here — or **export the `.studio3`** to save those changes back into the
+  file for Studio. See [Silhouette Studio files](#silhouette-studio-files) for what's supported.
 - **Silhouette-style registration marks** — Standard (3-mark) or Four-corner — with sticker
   placement automatically kept clear of the marks so nothing overlaps or obscures them.
 - **Print directly** to your system print dialog at true physical size, or **download the SVG**
@@ -63,6 +68,33 @@ registration marks), or any other script that talks to the cutter.
   [docs/cutter-setup.md](docs/cutter-setup.md).
 - Paper types (White sticker / Clear sticker / 20 lb printer paper), each with its own cut
   settings, and a dark/light theme.
+
+## Silhouette Studio files
+
+Silhouette doesn't document the `.studio3` format, so support here was worked out from real
+files and is deliberately narrow:
+
+- **Import** reads files saved by Silhouette Studio 5. It brings in stickers — an image with a
+  cut outline around it, such as a traced PNG — along with the page size. The outline comes from
+  the file, so the Offset Margin control doesn't apply to imported stickers. Other objects
+  (rotated or mirrored objects, artwork in a format a browser can't draw) aren't shown yet; the
+  status line says how many were left out. Shapes drawn in Studio, such as a polygon, come in as
+  cut-only outlines with no artwork, and can be moved, resized or deleted like a sticker. A moved
+  and a resized shape were checked against the same edit made in Studio itself.
+- **Placement is automatic.** A sticker closer to the edge than the cutter can reach, or sitting on
+  a registration mark, is moved the shortest distance that fixes it, and the packer keeps added
+  stickers the usual gap away from every side of the imported ones. There's nothing to confirm.
+- **Export** writes your changes back into the file you imported: stickers you moved, resized or
+  deleted. Everything it doesn't touch — layers, cut settings, objects it couldn't show — is kept
+  byte for byte, so nothing is lost on the way back to Studio. Stickers added in Shadow Garage
+  can't be written to a `.studio3` yet, and neither can a sheet that didn't start from one; use
+  **Download SVG** for those.
+- The file's stored preview thumbnail isn't redrawn, so a file browser may show the old layout
+  until Studio saves the file again. Studio also keeps a cached cut job in the file (its path data
+  and bounding box) that isn't updated either. Moves and deletes were checked against files saved
+  by Studio itself, and match them apart from that cache. An export with a sticker moved was
+  reopened in Studio with the sticker in its new place; look at the cut preview before sending one
+  to the cutter, as nobody has yet confirmed that the cut follows the new position.
 
 ## Supported cutters
 

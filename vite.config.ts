@@ -4,4 +4,6 @@ import { defineConfig } from "vite";
 // so built asset URLs (JS/CSS) resolve correctly under that subpath instead of the domain root.
 export default defineConfig({
   base: "/shadow-garage/",
+  // So the tests can load their .studio3 fixture as bytes (an `?inline` import).
+  assetsInclude: ["**/*.studio3"],
 });

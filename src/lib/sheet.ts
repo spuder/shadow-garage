@@ -414,3 +414,40 @@ export function packMixedSheet(
   }
   return best;
 }
+
+/**
+ * The keepout that makes the packer leave `gapMm` clear on every side of a sticker that is fixed
+ * in place. The packer lets a sticker touch the top and bottom of a keepout (it was written for
+ * registration-mark clearance zones), so this one is `gapMm` taller at both ends.
+ */
+export function stickerKeepout(rect: KeepoutRect, gapMm: number): KeepoutRect {
+  return { x: rect.x, y: rect.y - gapMm, w: rect.w, h: rect.h + 2 * gapMm };
+}
+
+/**
+ * The nearest spot to `rect` that is inside the sheet's margin and clear of the keepouts, so a
+ * sticker moves only as far as it has to. A rect that is already fine comes back exactly as it
+ * was; one with nowhere better to go (bigger than the area) is left as near as it can get.
+ */
+export function nudgeIntoArea(rect: KeepoutRect, sheet: SheetSize, marginMm: number, keepouts: KeepoutRect[]): { x: number; y: number } {
+  const maxX = Math.max(marginMm, sheet.widthMm - marginMm - rect.w);
+  const maxY = Math.max(marginMm, sheet.heightMm - marginMm - rect.h);
+  let x = Math.min(Math.max(rect.x, marginMm), maxX);
+  let y = Math.min(Math.max(rect.y, marginMm), maxY);
+  const hit = (px: number, py: number) => keepouts.find((z) => px < z.x + z.w && z.x < px + rect.w && py < z.y + z.h && z.y < py + rect.h);
+  for (let pass = 0; pass <= keepouts.length; pass++) {
+    const z = hit(x, y);
+    if (!z) break;
+    const spots = [
+      { x: z.x + z.w, y },
+      { x: z.x - rect.w, y },
+      { x, y: z.y + z.h },
+      { x, y: z.y - rect.h },
+    ]
+      .filter((p) => p.x >= marginMm && p.x <= maxX && p.y >= marginMm && p.y <= maxY && !hit(p.x, p.y))
+      .sort((a, b) => Math.abs(a.x - x) + Math.abs(a.y - y) - (Math.abs(b.x - x) + Math.abs(b.y - y)));
+    if (spots.length === 0) break;
+    ({ x, y } = spots[0]);
+  }
+  return { x, y };
+}
