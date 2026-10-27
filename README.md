@@ -128,3 +128,8 @@ what is still open.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+## Resources
+
+Checkout another similar project: [https://bladework.app/](https://bladework.app/)
