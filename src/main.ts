@@ -1,5 +1,6 @@
 import "./style.css";
 import { extractAlphaMask, type RawMask } from "./lib/trace";
+import { prepareImportedArtwork, type ArtworkMask } from "./lib/artworkMask";
 import { computeDesign, scaleDesign, type DesignResult } from "./lib/design";
 import { translateContours } from "./lib/geometry";
 import { SHEET_SIZES, nudgeIntoArea, packMixedSheet, stickerKeepout, type KeepoutRect, type MixedPlacement, type SheetSize } from "./lib/sheet";
@@ -54,7 +55,7 @@ interface StickerDesign {
   id: string;
   fileName: string;
   imageDataUrl: string;
-  raw: RawMask | null; // the artwork's alpha mask, for tracing; null when the outline was imported instead
+  raw: RawMask | null; // the artwork's alpha mask, for tracing; null for an imported sticker whose artwork has nothing to trace
   artworkAspect: number;
   widthMm: number;
   heightMm: number;
@@ -65,7 +66,10 @@ interface StickerDesign {
   design: DesignResult | null;
   // Set for a sticker read from a .studio3 file: its outline and artwork at the size they have
   // there, and which of the file's stickers it is (for writing the file back).
-  imported: { base: DesignResult; studio3Index: number } | null;
+  // `artWidthMm` is how wide the artwork's opaque part is at the file's size, when the artwork
+  // has a transparent background (then `raw` holds its mask); null when it can't be traced.
+  // `traced` turns true once the margin is changed: the outline is then traced like an upload's.
+  imported: { base: DesignResult; studio3Index: number; artWidthMm: number | null; traced: boolean } | null;
   pinned: { x: number; y: number } | null; // its own spot on the sheet (top-left); the packer works around it
 }
 
@@ -86,7 +90,8 @@ interface AppState {
   regmarksEnabled: boolean;
   regmarkStyle: "standard" | "four_corner";
   designs: StickerDesign[];
-  selectedDesignId: string | null;
+  selectedDesignId: string | null; // the selected sticker: the one the panel and the resize handles follow
+  alsoSelectedIds: string[]; // more stickers selected with it (⌘/Ctrl/⇧-click): size, margin and corners apply to them all
   activeTab: Tab;
   camera: Camera;
   fitScale: number;
@@ -117,6 +122,7 @@ const state: AppState = {
   regmarkStyle: "standard",
   designs: [],
   selectedDesignId: null,
+  alsoSelectedIds: [],
   activeTab: "design",
   camera: { scale: 1, tx: 0, ty: 0 },
   fitScale: 1,
@@ -148,6 +154,7 @@ const imageBlock = document.getElementById("imageBlock") as HTMLDivElement;
 const fileNameEl = document.getElementById("fileName") as HTMLSpanElement;
 const addImageBtn = document.getElementById("addImageBtn") as HTMLButtonElement;
 const removeImageBtn = document.getElementById("removeImageBtn") as HTMLButtonElement;
+const selectAllBtn = document.getElementById("selectAllBtn") as HTMLButtonElement;
 
 const sizeBlock = document.getElementById("sizeBlock") as HTMLDivElement;
 const widthInput = document.getElementById("widthInput") as HTMLInputElement;
@@ -333,6 +340,46 @@ function selectedDesign(): StickerDesign | null {
   return state.designs.find((d) => d.id === state.selectedDesignId) ?? null;
 }
 
+/** Every selected sticker, the main one first. */
+function selectedDesigns(): StickerDesign[] {
+  const main = selectedDesign();
+  if (!main) return [];
+  return [main, ...state.alsoSelectedIds.map((id) => state.designs.find((d) => d.id === id)).filter((d): d is StickerDesign => !!d && d !== main)];
+}
+
+/** Selects just this sticker (or nothing). */
+function selectOnly(id: string | null) {
+  state.selectedDesignId = id;
+  state.alsoSelectedIds = [];
+}
+
+/**
+ * Adds a sticker to the selection, or takes it out if it's in it. The one added becomes the main
+ * selection; taking the main one out hands that to the next selected sticker.
+ */
+function toggleSelected(id: string) {
+  const main = state.selectedDesignId;
+  if (id === main) {
+    if (state.alsoSelectedIds.length > 0) state.selectedDesignId = state.alsoSelectedIds.shift()!;
+  } else if (state.alsoSelectedIds.includes(id)) {
+    state.alsoSelectedIds = state.alsoSelectedIds.filter((x) => x !== id);
+  } else {
+    if (main) state.alsoSelectedIds.push(main);
+    state.selectedDesignId = id;
+  }
+}
+
+/** Whether a click should add to the selection rather than replace it. */
+function isAddToSelection(e: MouseEvent): boolean {
+  return e.metaKey || e.ctrlKey || e.shiftKey;
+}
+
+/** Where the main selected sticker's first copy sits on the sheet, for its handles. */
+function firstPlacementOf(id: string | null): { x: number; y: number; rotated: boolean } | null {
+  const p = state.lastPlacements.find((pp) => pp.id === id);
+  return p ? { x: p.x, y: p.y, rotated: p.rotated } : null;
+}
+
 function renderOptionsFor(design: StickerDesign): RenderOptions {
   const pt = currentPaperType();
   return {
@@ -441,7 +488,7 @@ function pinnedWarning(sheet: SheetSize): string {
 
 /** Traces the sticker's artwork at its current size, or resizes the outline it was imported with. */
 function buildDesign(d: StickerDesign, aspectLocked = d.aspectLocked, driveBy = d.driveBy): DesignResult {
-  if (d.imported) return scaleDesign(d.imported.base, d.widthMm, d.heightMm, aspectLocked, driveBy);
+  if (d.imported && !d.imported.traced) return scaleDesign(d.imported.base, d.widthMm, d.heightMm, aspectLocked, driveBy);
   return computeDesign(d.raw!, d.widthMm, d.heightMm, d.marginMm, aspectLocked, driveBy, d.preserveSharpCorners);
 }
 
@@ -529,33 +576,60 @@ function render() {
       } else {
         state.editingSelected = false;
         overlayLayer.innerHTML = "";
+        renderAlsoSelectedOutlines();
       }
     } else {
       overlayLayer.innerHTML = "";
+      renderAlsoSelectedOutlines();
     }
     const warning = pinnedWarning(sheet);
     summaryEl.textContent = `${placements.length} pcs on ${sheet.name}${warning ? ` · ${warning}` : ""}`;
   }
 }
 
-/** The side-panel fields that follow the selected sticker: its name, size and margin. */
+/** The value every item shares, or null when they differ (or there are none). */
+function shared<T>(items: StickerDesign[], value: (d: StickerDesign) => T, same: (a: T, b: T) => boolean = (a, b) => a === b): T | null {
+  if (items.length === 0) return null;
+  const first = value(items[0]);
+  return items.every((d) => same(value(d), first)) ? first : null;
+}
+
+/** Whether an imported sticker's artwork has nothing to trace, so it keeps its file's outline. */
+function isUntraceable(d: StickerDesign): boolean {
+  return !!d.imported && !d.raw;
+}
+
+/** The side-panel fields that follow the selection: its name, size and margin (shared, or blank when they differ). */
 function syncSelectionControls() {
   const sel = selectedDesign();
-  fileNameEl.textContent = sel ? sel.fileName : "—";
+  const all = selectedDesigns();
+  const many = all.length > 1;
+  fileNameEl.textContent = many ? `${all.length} stickers selected` : sel ? sel.fileName : "—";
+  removeImageBtn.textContent = many ? `Remove ${all.length}` : "Remove";
   syncSizeInputs(sel);
 
-  const margin = sel?.marginMm ?? state.marginMm;
-  if (document.activeElement !== marginInput) marginInput.value = margin.toFixed(1);
-  marginSlider.value = String(margin);
-  sharpCornersToggle.checked = sel?.preserveSharpCorners ?? state.preserveSharpCorners;
-  // An imported sticker keeps the outline it came with, so there's no margin to trace it at.
-  const outlineImported = !!sel?.imported;
-  marginInput.disabled = marginSlider.disabled = sharpCornersToggle.disabled = outlineImported;
-  marginForEl.textContent = outlineImported
-    ? "— this sticker keeps the outline from its .studio3 file"
-    : sel && state.designs.length > 1
-      ? `for ${sel.fileName}`
-      : "";
+  // An imported sticker keeps the outline it came with until its margin is changed; artwork with
+  // neither a transparent nor a plain background has nothing to trace, so it always keeps it.
+  const traceable = all.filter((d) => !isUntraceable(d));
+  const margin = all.length ? shared(traceable.length ? traceable : all, (d) => d.marginMm) : state.marginMm;
+  if (document.activeElement !== marginInput) marginInput.value = margin === null ? "" : margin.toFixed(1);
+  marginInput.placeholder = margin === null ? "mixed" : "";
+  marginSlider.value = String(margin ?? sel?.marginMm ?? state.marginMm);
+  const sharp = all.length ? shared(all, (d) => d.preserveSharpCorners) : state.preserveSharpCorners;
+  sharpCornersToggle.checked = sharp ?? false;
+  sharpCornersToggle.indeterminate = sharp === null;
+  const untraceable = all.length > 0 && traceable.length === 0;
+  marginInput.disabled = marginSlider.disabled = sharpCornersToggle.disabled = untraceable;
+  const locked = all.length - traceable.length;
+  marginForEl.textContent = many
+    ? `for ${all.length} stickers${locked > 0 ? ` (${locked === 1 ? "1 keeps the outline from its" : `${locked} keep the outlines from their`} .studio3 file: nothing to trace)` : ""}`
+    : untraceable
+      ? "— this sticker keeps the outline from its .studio3 file: its artwork has no transparent or plain background to trace around"
+      : sel?.imported && !sel.imported.traced
+        ? "— changing it re-traces this sticker's outline from its artwork"
+        : sel && state.designs.length > 1
+          ? `for ${sel.fileName}`
+          : "";
 }
 
 function renderStudio3() {
@@ -572,12 +646,22 @@ function renderThumbStrip() {
   thumbStrip.innerHTML = "";
   state.designs.forEach((d) => {
     const thumb = document.createElement("div");
-    thumb.className = "thumb" + (d.id === state.selectedDesignId ? " active" : "");
+    const selected = d.id === state.selectedDesignId || state.alsoSelectedIds.includes(d.id);
+    thumb.className = "thumb" + (selected ? " active" : "");
+    thumb.title = "Click to select; ⌘, Ctrl or ⇧-click to select several";
     thumb.style.backgroundImage = `url(${d.imageDataUrl})`;
-    thumb.addEventListener("click", () => {
-      state.selectedDesignId = d.id;
-      state.editingSelected = false;
-      state.needsRefit = true;
+    thumb.addEventListener("click", (e) => {
+      if (isAddToSelection(e)) {
+        toggleSelected(d.id);
+        if (state.activeTab === "sheet") {
+          state.editingSelected = true;
+          state.editingPlacementXY = firstPlacementOf(state.selectedDesignId);
+        }
+      } else {
+        selectOnly(d.id);
+        state.editingSelected = false;
+        state.needsRefit = true;
+      }
       render();
     });
     const removeBtn = document.createElement("button");
@@ -602,45 +686,57 @@ function renderThumbStrip() {
 // ---- size fields (width/height text boxes + aspect lock) ----
 function syncSizeInputs(design: StickerDesign | null) {
   if (!design || !design.design) return;
+  // With several selected, a field shows the size they share (to the hundredth of an inch shown), or is blank.
+  const all = selectedDesigns().filter((d) => d.design);
+  const inches = (mm: number) => mmToIn(mm).toFixed(2);
+  const w = shared(all, (d) => inches(d.design!.actualWmm));
+  const h = shared(all, (d) => inches(d.design!.actualHmm));
   // Don't stomp on whichever field the user is actively typing into.
-  if (document.activeElement !== widthInput) widthInput.value = mmToIn(design.design.actualWmm).toFixed(2);
-  if (document.activeElement !== heightInput) heightInput.value = mmToIn(design.design.actualHmm).toFixed(2);
+  if (document.activeElement !== widthInput) widthInput.value = w ?? "";
+  if (document.activeElement !== heightInput) heightInput.value = h ?? "";
+  widthInput.placeholder = w === null ? "mixed" : "";
+  heightInput.placeholder = h === null ? "mixed" : "";
   lockAspectBtn.setAttribute("aria-pressed", String(design.aspectLocked));
   lockIconClosed.toggleAttribute("hidden", !design.aspectLocked);
   lockIconOpen.toggleAttribute("hidden", design.aspectLocked);
 }
 
+// Size applies to every selected sticker: each gets the width (or height) typed, and keeps its own shape if locked.
 widthInput.addEventListener("input", () => {
-  const design = selectedDesign();
-  if (!design) return;
+  const all = selectedDesigns();
+  if (all.length === 0) return;
   const v = parseFloat(widthInput.value);
   if (!Number.isFinite(v) || v <= 0) return;
-  design.widthMm = clamp(inToMm(v), MIN_SIZE_MM, maxStickerDimMm());
-  design.driveBy = "width"; // hit width exactly; height (if locked) follows the true geometry
+  for (const design of all) {
+    design.widthMm = clamp(inToMm(v), MIN_SIZE_MM, maxStickerDimMm());
+    design.driveBy = "width"; // hit width exactly; height (if locked) follows the true geometry
+  }
   recompute();
 });
 
 heightInput.addEventListener("input", () => {
-  const design = selectedDesign();
-  if (!design) return;
+  const all = selectedDesigns();
+  if (all.length === 0) return;
   const v = parseFloat(heightInput.value);
   if (!Number.isFinite(v) || v <= 0) return;
-  design.heightMm = clamp(inToMm(v), MIN_SIZE_MM, maxStickerDimMm());
-  design.driveBy = "height"; // hit height exactly; width (if locked) follows the true geometry
+  for (const design of all) {
+    design.heightMm = clamp(inToMm(v), MIN_SIZE_MM, maxStickerDimMm());
+    design.driveBy = "height"; // hit height exactly; width (if locked) follows the true geometry
+  }
   recompute();
 });
 
 lockAspectBtn.addEventListener("click", () => {
-  const design = selectedDesign();
-  if (!design) return;
-  design.aspectLocked = !design.aspectLocked;
-  if (design.aspectLocked) {
+  const main = selectedDesign();
+  if (!main) return;
+  const locked = !main.aspectLocked;
+  for (const design of selectedDesigns()) {
+    design.aspectLocked = locked;
     // Re-locking: hold width fixed and let height snap back to the true proportional geometry.
-    design.driveBy = "width";
-    recompute();
-  } else {
-    render();
+    if (locked) design.driveBy = "width";
   }
+  if (locked) recompute();
+  else render();
 });
 
 // ---- camera / pan / zoom ----
@@ -690,7 +786,16 @@ window.addEventListener("keydown", (e) => {
     render();
   } else if ((e.key === "Delete" || e.key === "Backspace") && state.editingSelected && state.selectedDesignId) {
     e.preventDefault();
-    removeDesign(state.selectedDesignId);
+    const ids = selectedDesigns().map((d) => d.id);
+    if (ids.length > 1 && !confirm(`Remove the ${ids.length} selected stickers?`)) return;
+    removeDesigns(ids);
+  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && state.designs.length > 0) {
+    e.preventDefault();
+    selectAll();
+    render();
+  } else if (e.key === "Escape" && state.alsoSelectedIds.length > 0) {
+    state.alsoSelectedIds = [];
+    render();
   }
 });
 
@@ -734,14 +839,16 @@ previewHost.addEventListener("pointerdown", (e) => {
     const [mmX, mmY] = screenToMm(state.camera, e.clientX - rect.left, e.clientY - rect.top);
     const hit = hitTestPlacement(mmX, mmY);
     if (hit) {
-      state.selectedDesignId = hit.id;
+      const adding = isAddToSelection(e);
+      if (adding) toggleSelected(hit.id);
+      else if (hit.id !== state.selectedDesignId || state.alsoSelectedIds.length > 0) selectOnly(hit.id);
       state.editingSelected = true;
-      state.editingPlacementXY = { x: hit.x, y: hit.y, rotated: hit.rotated };
+      state.editingPlacementXY = state.selectedDesignId === hit.id ? { x: hit.x, y: hit.y, rotated: hit.rotated } : firstPlacementOf(state.selectedDesignId);
       const sel = selectedDesign();
       syncSelectionControls();
       renderOverlay(sel);
       renderThumbStrip();
-      if (sel?.pinned) startMove(e, sel);
+      if (!adding && sel?.pinned) startMove(e, sel);
       return;
     }
   }
@@ -785,6 +892,7 @@ const HANDLE_DEFS = [
 
 function renderOverlay(design: StickerDesign | null) {
   overlayLayer.innerHTML = "";
+  renderAlsoSelectedOutlines();
   if (!design || !design.design) return;
   if (!state.editingSelected) return;
   if (state.activeTab === "sheet" && !state.editingPlacementXY) return;
@@ -825,6 +933,27 @@ function renderOverlay(design: StickerDesign | null) {
   overlayLayer.appendChild(deleteBtn);
 
   renderDimReadout(design, (x0 + x1) / 2, y1);
+}
+
+/** A dashed outline on the sheet around every copy of each sticker selected along with the main one. */
+function renderAlsoSelectedOutlines() {
+  if (state.activeTab !== "sheet" || state.alsoSelectedIds.length === 0) return;
+  for (const p of state.lastPlacements) {
+    if (!state.alsoSelectedIds.includes(p.id)) continue;
+    const d = state.designs.find((dd) => dd.id === p.id);
+    if (!d?.design) continue;
+    const w = p.rotated ? d.design.actualHmm : d.design.actualWmm;
+    const h = p.rotated ? d.design.actualWmm : d.design.actualHmm;
+    const [x0, y0] = mmToScreen(state.camera, p.x, p.y);
+    const [x1, y1] = mmToScreen(state.camera, p.x + w, p.y + h);
+    const outline = document.createElement("div");
+    outline.className = "selection-outline also-selected";
+    outline.style.left = `${x0}px`;
+    outline.style.top = `${y0}px`;
+    outline.style.width = `${x1 - x0}px`;
+    outline.style.height = `${y1 - y0}px`;
+    overlayLayer.appendChild(outline);
+  }
 }
 
 function renderDimReadout(design: StickerDesign, screenX: number, screenY: number) {
@@ -1059,11 +1188,15 @@ async function importStudio3(file: File): Promise<boolean> {
   if (state.designs.length > 0 && !confirm(`Importing ${file.name} replaces the stickers on the current sheet. Continue?`)) return false;
 
   const imageUrls = new Map<string, string>();
+  const masks = new Map<string, ArtworkMask | null>();
   try {
     for (const { imageId, artwork } of doc.stickers) {
       if (!artwork || imageUrls.has(imageId)) continue;
       const image = doc.images.get(imageId)!;
-      imageUrls.set(imageId, await readAsDataURL(new Blob([image.bytes.slice()], { type: image.mime })));
+      // A plain page around the artwork is made transparent, so the paper shows around it.
+      const prepared = await prepareImportedArtwork(await readAsDataURL(new Blob([image.bytes.slice()], { type: image.mime })));
+      imageUrls.set(imageId, prepared.imageDataUrl);
+      masks.set(imageId, prepared.mask);
     }
   } catch (e) {
     state.studio3Status = { text: `Couldn't import ${file.name}: ${errorText(e)}`, error: true };
@@ -1080,11 +1213,12 @@ async function importStudio3(file: File): Promise<boolean> {
       actualWmm: maxX - minX,
       actualHmm: maxY - minY,
     };
+    const mask = s.artwork ? masks.get(s.imageId) ?? null : null;
     return {
       id: uid(),
       fileName: s.artwork ? `${label} #${i + 1}` : `${label} shape #${i + 1}`,
       imageDataUrl: s.artwork ? imageUrls.get(s.imageId)! : NO_ARTWORK,
-      raw: null,
+      raw: mask?.raw ?? null,
       artworkAspect: s.imageRect.width / s.imageRect.height,
       widthMm: base.actualWmm,
       heightMm: base.actualHmm,
@@ -1093,12 +1227,12 @@ async function importStudio3(file: File): Promise<boolean> {
       marginMm: state.marginMm,
       preserveSharpCorners: state.preserveSharpCorners,
       design: null,
-      imported: { base, studio3Index: i },
+      imported: { base, studio3Index: i, artWidthMm: mask ? mask.artWidthFraction * s.imageRect.width : null, traced: false },
       pinned: { x: minX, y: minY },
     };
   });
   state.studio3 = { doc, fileName: file.name };
-  state.selectedDesignId = state.designs[0].id;
+  selectOnly(state.designs[0].id);
   state.editingPlacementXY = null;
   if (doc.pageWidthMm && doc.pageHeightMm) state.sheetIndex = sheetIndexFor(doc.pageWidthMm, doc.pageHeightMm);
 
@@ -1147,8 +1281,9 @@ async function exportStudio3() {
   for (const p of state.lastPlacements) {
     const d = state.designs.find((dd) => dd.id === p.id);
     if (!d?.design) continue;
-    // A sticker from the file is written back into its own record; any other is added.
-    if (source && d.imported && d.pinned && !written.has(d.id)) {
+    // A sticker from the file is written back into its own record; any other is added, as is
+    // one whose outline has been re-traced (its record can only be moved and resized).
+    if (source && d.imported && !d.imported.traced && d.pinned && !written.has(d.id)) {
       written.add(d.id);
       placements.push({
         index: d.imported.studio3Index,
@@ -1169,7 +1304,9 @@ async function exportStudio3() {
       let image = images.get(key);
       if (!image) {
         const { width, height } = d.design!.imagePlacementMM;
-        image = renderArtworkPng(d.imageDataUrl, adjust, width, height, rotated);
+        // Artwork that came from the file goes back as it was: baking the colour adjustment in
+        // again would apply it twice to art this app exported, adjusted, in the first place.
+        image = renderArtworkPng(d.imageDataUrl, d.imported ? NO_COLOR_ADJUST : adjust, width, height, rotated);
         images.set(key, image);
       }
       return image;
@@ -1250,7 +1387,7 @@ async function handleFiles(files: FileList | File[]) {
           pinned: null,
         };
         state.designs.push(design);
-        state.selectedDesignId = design.id;
+        selectOnly(design.id);
         resolve();
       };
       img.src = dataUrl;
@@ -1272,9 +1409,15 @@ async function handleFiles(files: FileList | File[]) {
 }
 
 function removeDesign(id: string) {
-  state.designs = state.designs.filter((d) => d.id !== id);
-  if (state.selectedDesignId === id) {
-    state.selectedDesignId = state.designs[0]?.id ?? null;
+  removeDesigns([id]);
+}
+
+function removeDesigns(ids: string[]) {
+  const gone = new Set(ids);
+  state.designs = state.designs.filter((d) => !gone.has(d.id));
+  state.alsoSelectedIds = state.alsoSelectedIds.filter((x) => !gone.has(x));
+  if (state.selectedDesignId && gone.has(state.selectedDesignId)) {
+    selectOnly(state.alsoSelectedIds[0] ?? state.designs[0]?.id ?? null);
     state.needsRefit = true;
     state.editingSelected = false;
     state.editingPlacementXY = null;
@@ -1285,9 +1428,24 @@ function removeDesign(id: string) {
 dropzone.addEventListener("click", () => fileInput.click());
 addImageBtn.addEventListener("click", () => fileInput.click());
 removeImageBtn.addEventListener("click", () => {
-  const sel = selectedDesign();
-  if (sel) removeDesign(sel.id);
+  const ids = selectedDesigns().map((d) => d.id);
+  if (ids.length > 1 && !confirm(`Remove the ${ids.length} selected stickers?`)) return;
+  removeDesigns(ids);
 });
+selectAllBtn.addEventListener("click", () => {
+  selectAll();
+  render();
+});
+
+/** Selects every sticker, keeping the main selection where it is. */
+function selectAll() {
+  if (!state.selectedDesignId) state.selectedDesignId = state.designs[0]?.id ?? null;
+  state.alsoSelectedIds = state.designs.map((d) => d.id).filter((id) => id !== state.selectedDesignId);
+  if (state.activeTab === "sheet") {
+    state.editingSelected = true;
+    state.editingPlacementXY = firstPlacementOf(state.selectedDesignId);
+  }
+}
 fileInput.addEventListener("change", () => {
   if (fileInput.files && fileInput.files.length > 0) handleFiles(fileInput.files);
   fileInput.value = "";
@@ -1318,11 +1476,25 @@ sheetSelect.addEventListener("change", () => {
   recompute();
 });
 
-// Margin and sharp corners apply to the selected sticker, and become the default for new ones.
+/**
+ * Switches an imported sticker from the outline in its file to one traced from its artwork, as
+ * an upload's is, keeping the artwork the size it was.
+ */
+function startTracing(d: StickerDesign) {
+  if (!d.imported || d.imported.traced || !d.raw || d.imported.artWidthMm === null) return;
+  d.imported.traced = true;
+  d.widthMm = d.imported.artWidthMm * (d.widthMm / d.imported.base.actualWmm) + 2 * d.marginMm;
+  d.driveBy = "width";
+}
+
+// Margin and sharp corners apply to every selected sticker, and become the default for new ones.
 function setMarginMm(mm: number) {
   state.marginMm = Math.round(mm * 10) / 10; // same 0.1 mm steps as the slider
-  const sel = selectedDesign();
-  if (sel) sel.marginMm = state.marginMm;
+  for (const d of selectedDesigns()) {
+    if (isUntraceable(d)) continue;
+    d.marginMm = state.marginMm;
+    startTracing(d);
+  }
   recompute();
 }
 
@@ -1335,15 +1507,20 @@ marginInput.addEventListener("input", () => {
 });
 // Once typing is done (Enter or leaving the box), show the stored value: clamped, one decimal.
 function syncMarginInput() {
-  marginInput.value = (selectedDesign()?.marginMm ?? state.marginMm).toFixed(1);
+  const all = selectedDesigns().filter((d) => !isUntraceable(d));
+  const margin = all.length ? shared(all, (d) => d.marginMm) : state.marginMm;
+  marginInput.value = margin === null ? "" : margin.toFixed(1);
 }
 marginInput.addEventListener("change", syncMarginInput);
 marginInput.addEventListener("blur", syncMarginInput);
 
 sharpCornersToggle.addEventListener("change", () => {
   state.preserveSharpCorners = sharpCornersToggle.checked;
-  const sel = selectedDesign();
-  if (sel) sel.preserveSharpCorners = state.preserveSharpCorners;
+  for (const d of selectedDesigns()) {
+    if (isUntraceable(d)) continue;
+    d.preserveSharpCorners = state.preserveSharpCorners;
+    startTracing(d);
+  }
   recompute();
 });
 

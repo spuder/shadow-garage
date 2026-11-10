@@ -55,7 +55,14 @@ step. Vite's `base` is `/shadow-garage/`, so the dev URL is
   placeholder artwork.
 
 **Imported stickers** (`StickerDesign.imported` / `.pinned` in `main.ts`) keep the outline from
-their file instead of being traced (`scaleDesign()` in `design.ts` resizes it), and are *pinned*:
+their file instead of being traced (`scaleDesign()` in `design.ts` resizes it) until their margin
+or sharp-corners setting is changed. Then `startTracing()` switches them to an outline traced from
+their artwork, keeping the artwork's size: from its transparency, or for artwork on a plain page
+(Studio's usual white background) from everything that isn't that page. That page, with any faint
+die-line drawn on it, is made transparent on import (`prepareImportedArtwork()` in
+`artworkMask.ts`), so the border shows the paper type's color as an upload's does. Artwork
+that's neither stays locked to the file's outline. Export writes a re-traced sticker as a new
+record, since a file's record can only be moved and resized. Imported stickers are *pinned*:
 they sit where the file put them or where the user dragged them, and `computeSheetItems()` passes
 their boxes to the packer as keep-outs so other stickers flow around them. Their artwork is
 clipped to the cut line (`RenderOptions.clipArtwork`), since Studio files usually hold images
@@ -63,7 +70,10 @@ with a solid background.
 
 **`src/main.ts`** holds all UI: one mutable `state` object, a `recompute()` → `render()` cycle,
 and the camera/pointer handling (pan, zoom, corner-drag resize, via `camera.ts`) plus the Cutter
-panel. `index.html` holds the static DOM that `main.ts` looks up by id.
+panel. `index.html` holds the static DOM that `main.ts` looks up by id. The selection is
+`state.selectedDesignId` (the main sticker: the panel and the resize handles follow it) plus
+`state.alsoSelectedIds` (⌘/Ctrl/⇧-click, Select all); `selectedDesigns()` is all of them, and the
+size, aspect-lock, margin, sharp-corners and Remove controls act on every one.
 
 **Cutter stack (`src/lib/cutter/`)** is layered so that new models and manufacturers are mostly
 data:

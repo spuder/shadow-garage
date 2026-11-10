@@ -81,11 +81,19 @@ export function computeDesign(
   const actualWmm = finalBBoxMM.maxX - finalBBoxMM.minX;
   const actualHmm = finalBBoxMM.maxY - finalBBoxMM.minY;
 
-  // Run the raw artwork bbox through the identical transform pipeline to find where the image sits.
-  const rawCorners: Contour = [
-    [raw.rawBBox.minX, raw.rawBBox.minY],
-    [raw.rawBBox.maxX, raw.rawBBox.maxY],
-  ];
+  // Run the image's own rectangle through the identical transform pipeline to find where the
+  // image sits. Not the artwork's bbox: padding around the artwork (transparent, or a plain page)
+  // would otherwise be squeezed into it, shrinking and stretching the artwork.
+  const box = raw.imageBox;
+  const rawCorners: Contour = box
+    ? [
+        [box.x, box.y],
+        [box.x + box.width, box.y + box.height],
+      ]
+    : [
+        [raw.rawBBox.minX, raw.rawBBox.minY],
+        [raw.rawBBox.maxX, raw.rawBBox.maxY],
+      ];
   let rawMM = translateContours([rawCorners], -bbox.minX, -bbox.minY);
   rawMM = scaleContours(rawMM, scale, scale);
   rawMM = scaleContours(rawMM, scaleX, scaleY);

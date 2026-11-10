@@ -199,6 +199,11 @@ html, body {
   border-radius: 2px;
   pointer-events: none;
 }
+/* Stickers selected along with the main one (it alone gets the resize handles). */
+.selection-outline.also-selected {
+  border-style: dashed;
+  opacity: 0.85;
+}
 .resize-handle {
   position: absolute;
   width: 14px;
