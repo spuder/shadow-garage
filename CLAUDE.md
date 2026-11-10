@@ -70,7 +70,10 @@ with a solid background.
 
 **`src/main.ts`** holds all UI: one mutable `state` object, a `recompute()` → `render()` cycle,
 and the camera/pointer handling (pan, zoom, corner-drag resize, via `camera.ts`) plus the Cutter
-panel. `index.html` holds the static DOM that `main.ts` looks up by id.
+panel. `index.html` holds the static DOM that `main.ts` looks up by id. The selection is
+`state.selectedDesignId` (the main sticker: the panel and the resize handles follow it) plus
+`state.alsoSelectedIds` (⌘/Ctrl/⇧-click, Select all); `selectedDesigns()` is all of them, and the
+size, aspect-lock, margin, sharp-corners and Remove controls act on every one.
 
 **Cutter stack (`src/lib/cutter/`)** is layered so that new models and manufacturers are mostly
 data:
