@@ -9,6 +9,7 @@ import { getRegmarkKeepoutRects, REGMARK_ORIGIN_MM } from "./lib/regmarks";
 import { downloadBlob, downloadSvgString } from "./lib/download";
 import { parseStudio3, writeStudio3, type Studio3Document } from "./lib/studio3";
 import { printSvg } from "./lib/print";
+import { flattenForPrint } from "./lib/printArtwork";
 import { PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { isSupportedBrowser, showUnsupportedBrowserAlert } from "./lib/browserCheck";
@@ -1366,17 +1367,32 @@ async function bakedItem(item: SheetItem): Promise<SheetItem> {
   return { ...item, opts: { ...item.opts, imageDataUrl, colorAdjust: undefined } };
 }
 
-/** Builds the SVG for printing/export of whatever the active tab shows, with baked colour. */
-async function buildOutputSVG(includeCutLines: boolean): Promise<string | null> {
+/**
+ * Printed version of an item: its artwork colour-adjusted, cropped to the sticker's box and
+ * flattened onto white (see flattenForPrint), so the print job holds no transparency.
+ */
+async function printItem(item: SheetItem): Promise<SheetItem> {
+  const { design, opts } = item;
+  const box = { x: 0, y: 0, width: design.actualWmm, height: design.actualHmm };
+  const flat = await flattenForPrint(opts.imageDataUrl, opts.colorAdjust, design.imagePlacementMM, box);
+  return { ...item, design: { ...design, imagePlacementMM: flat.rect }, opts: { ...opts, imageDataUrl: flat.imageDataUrl, colorAdjust: undefined } };
+}
+
+/**
+ * Builds the SVG of whatever the active tab shows, with baked colour: for the SVG download, or
+ * for printing (`forPrint`), where the artwork is also flattened onto white.
+ */
+async function buildOutputSVG(includeCutLines: boolean, forPrint = false): Promise<string | null> {
   const sheet = currentSheet();
+  const prepare = forPrint ? printItem : bakedItem;
   if (state.activeTab === "design") {
     const sel = selectedDesign();
     if (!sel?.design) return null;
-    const { opts } = await bakedItem({ design: sel.design, x: 0, y: 0, opts: renderOptionsFor(sel) });
-    return buildSingleStickerSVG(sel.design, opts, includeCutLines);
+    const item = await prepare({ design: sel.design, x: 0, y: 0, opts: renderOptionsFor(sel) });
+    return buildSingleStickerSVG(item.design, item.opts, includeCutLines);
   }
   const { items } = computeSheetItems(sheet);
-  return buildSheetSVG(await Promise.all(items.map(bakedItem)), sheet, currentRegmarkStyle(), includeCutLines);
+  return buildSheetSVG(await Promise.all(items.map(prepare)), sheet, currentRegmarkStyle(), includeCutLines);
 }
 
 /** Runs a print/export, disabling its button while artwork is being baked (it can take a moment). */
@@ -1423,8 +1439,8 @@ downloadSvgBtn.addEventListener("click", () =>
 
 printBtn.addEventListener("click", () =>
   withBusyButton(printBtn, async () => {
-    const svg = await buildOutputSVG(state.printCutLines);
-    if (svg) printSvg(svg);
+    const svg = await buildOutputSVG(state.printCutLines, true);
+    if (svg) await printSvg(svg);
   })
 );
 
