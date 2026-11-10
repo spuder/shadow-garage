@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SHEET_SIZES } from "../sheet";
 import { cameo3Responder, FakeTransport } from "./fakeTransport";
-import { chunkFrames, frameCommands, GraphtecProtocol, homeCommands, manualRegmarkCommand, mmToSU, moveCommand, parseStatus, pathCommands, regmarkCommands, setupCommands } from "./graphtec";
+import { chunkFrames, frameCommands, GraphtecProtocol, homeCommands, manualRegmarkCommand, mmToSU, moveCommand, parseStatus, pathCommands, regmarkCommands, setupCommands, isMovementEvent } from "./graphtec";
 import { layoutJob, testSquarePaths } from "./job";
 import { STICKER_PAPER } from "./materials";
 import { modelById } from "./models";
@@ -209,5 +209,20 @@ describe("paper types", () => {
     expect(PAPER_TYPES.filter((p) => p.adhesive).every((p) => /sticker/i.test(p.name))).toBe(true);
     expect(setupCommands(cameo3, PRINTER_PAPER_20LB)).toEqual(expect.arrayContaining(["!1,1", "FX1,1", "TF2,1"]));
     expect(PRINTER_PAPER_20LB.autoBladeDepth).toBeGreaterThan(sticker.autoBladeDepth);
+  });
+});
+
+describe("isMovementEvent", () => {
+  it("is a bare 0 or 1, the Bluetooth movement events", () => {
+    expect(isMovementEvent("1")).toBe(true);
+    expect(isMovementEvent("0")).toBe(true);
+  });
+
+  it("isn't a padded reply, as a mark search or position query answers", () => {
+    expect(isMovementEvent("    0")).toBe(false);
+    expect(isMovementEvent("    1")).toBe(false);
+    expect(isMovementEvent("   -1")).toBe(false);
+    expect(isMovementEvent("    0,    0")).toBe(false);
+    expect(isMovementEvent("2")).toBe(false);
   });
 });

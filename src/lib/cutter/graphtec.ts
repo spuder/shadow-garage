@@ -39,6 +39,17 @@ const TOOL_EMPTY = 0;
 const TOOL_AUTOBLADE = 2;
 const BLADE_DIAMETER_MM = 0.9;
 const CLIP_FUZZ_MM = 0.05; // one device step; points this close outside the clip box are fine
+/** How long a mark search may take before it counts as failed. */
+const REGMARK_TIMEOUT_MS = 40_000;
+
+/**
+ * A movement event: a single bare digit, with none of the padding a query's reply has. A Cameo 3
+ * over Bluetooth LE sends "1" as the carriage starts moving and "0" as it stops, unasked.
+ */
+export function isMovementEvent(reply: string): boolean {
+  return /^[01]$/.test(reply);
+}
+
 const MAX_CHUNK_BYTES = 1024; // Silhouette Studio's default packet size; upstream's safe_write uses the same
 
 // Graphtec.py CAMEO_MATS codes for the TG command.
@@ -347,15 +358,27 @@ export class GraphtecProtocol implements CutterProtocol {
     await this.send(cmds.slice(matLength).filter((c) => !(otherTool && c.startsWith("TF"))));
   }
 
+  /**
+   * Waits for the mark search's result: a number padded to five characters, "    0" when the marks
+   * were found. Over Bluetooth LE a Cameo 3 also sends a bare "1" when the carriage starts moving
+   * and "0" when it stops, on the same reply stream. Those are skipped: read as the result, the
+   * first "1" (about a second into the scan) made every search look failed, and the retry that
+   * followed restarted the cutter's scan partway through the marks.
+   */
   private async awaitRegistration(): Promise<void> {
-    let reply: string;
-    try {
-      reply = await this.readReply(40_000); // the optical search can take a while
-    } catch (e) {
-      if (e instanceof TransportTimeoutError) throw new RegmarkNotFoundError("no reply within 40 s");
-      throw e;
+    const deadline = Date.now() + REGMARK_TIMEOUT_MS; // the optical search can take a while
+    for (;;) {
+      let reply: string;
+      try {
+        reply = await this.readReply(Math.max(1, deadline - Date.now()));
+      } catch (e) {
+        if (e instanceof TransportTimeoutError) throw new RegmarkNotFoundError(`no reply within ${REGMARK_TIMEOUT_MS / 1000} s`);
+        throw e;
+      }
+      if (isMovementEvent(reply)) continue;
+      if (reply.trim() !== "0") throw new RegmarkNotFoundError(`reply "${reply}"`);
+      return;
     }
-    if (reply.trim() !== "0") throw new RegmarkNotFoundError(`reply "${reply}"`);
   }
 
   async searchRegmarks(spec: RegmarkSpec, extraOffsetMm = 0): Promise<void> {

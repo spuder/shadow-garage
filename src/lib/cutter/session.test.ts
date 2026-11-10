@@ -214,6 +214,25 @@ describe("mark search retries", () => {
     expect(searchTops(t.log)).toEqual([60, 100]);
   });
 
+  it("waits past the movement events a Cameo 3 sends over Bluetooth for the real result", async () => {
+    // Over BLE the carriage's "moving" (1) and "stopped" (0) events arrive on the reply stream
+    // ahead of the search's padded result. Read as the result, the first "1" failed every search.
+    const t = new FakeTransport(cameo3Responder({ regmarkReply: "1\x030\x031\x03    0\x03" }));
+    const session = await CutterSession.open(t, cameo3);
+    await session.run(job(true));
+    expect(searchTops(t.log)).toEqual([60]); // one search, found: no retry
+    expect(t.log).toContain("M600,600");
+  });
+
+  it("still reports a real failure that follows movement events", async () => {
+    const t = new FakeTransport(cameo3Responder({ regmarkReply: ["1\x03" + NOT_FOUND, "1\x030\x03" + FOUND] }));
+    const session = await CutterSession.open(t, cameo3);
+    const attempts: number[] = [];
+    await session.run(job(true), { onRegmarkAttempt: (n) => attempts.push(n) });
+    expect(attempts).toEqual([1, 2]);
+    expect(searchTops(t.log)).toEqual([60, 100]);
+  });
+
   it("uses the model's retry positions", async () => {
     const t = new FakeTransport(cameo3Responder({ regmarkReply: NOT_FOUND }));
     const session = await CutterSession.open(t, { ...cameo3, regmarkScanOffsetMm: 0, regmarkSearchStepsMm: [0, 1] });
