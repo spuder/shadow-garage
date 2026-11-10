@@ -126,6 +126,12 @@ After a failed scan, **Try manual registration** appears. Use the arrow pad (1 m
 move the blade over the corner of the top-left black square, then **Register here**. This hasn't
 been confirmed on a Cameo 3 yet; if it doesn't work, please send the log.
 
+Manual registration only tells the cutter where to start looking: it still reads all three marks
+with its sensor. So it helps when the scan starts in the wrong place, but not when the sensor can't
+see the marks at all, as on holographic or clear stock (see above). When the cutter can't read the
+marks it shows a registration mark error on its own screen and asks you to unload: unload the mat
+there before sending again.
+
 ## If part of a job shifts
 
 A shift partway through a job means the cutter lost its position — everything after that point

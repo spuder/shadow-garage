@@ -25,7 +25,7 @@ export interface PaperType {
 }
 
 const MATTE_PATCH_TIP =
-  "Before printing, stick matte white label paper or masking tape over the three corners where the registration marks print (about 30 mm in from each edge), so the marks print on something the cutter can see. Or, after a failed mark search, try manual registration.";
+  "Before printing, stick matte white label paper or masking tape over the three corners where the registration marks print (about 30 mm in from each edge), so the marks print on something the cutter can see. Manual registration won't get around it: the cutter still reads the marks with its sensor.";
 
 /**
  * Holographic starting point. Pale tints at 60 plus brightness -10 take a near-white like #f2f0e5
