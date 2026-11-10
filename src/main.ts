@@ -476,10 +476,7 @@ function render() {
   });
   rotateToggle.checked = state.allowRotation;
   regmarksToggle.checked = state.regmarksEnabled;
-  // Foil and film stocks: say how to make the marks readable before the sheet is printed.
-  const marksTip = state.regmarksEnabled ? currentPaperType().marksTip : undefined;
-  marksTipEl.hidden = !marksTip;
-  marksTipEl.textContent = marksTip ?? "";
+  renderMarksTip();
   regmarkStyleToggle.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("active", (b as HTMLButtonElement).dataset.style === state.regmarkStyle);
   });
@@ -561,6 +558,25 @@ function syncSelectionControls() {
     : sel && state.designs.length > 1
       ? `for ${sel.fileName}`
       : "";
+}
+
+/**
+ * Foil and film stocks: one short line under Print saying how to make the marks readable before
+ * the sheet is printed, which opens to the reason. Kept to a line because the bottom bar is pinned
+ * under the side panel: a tall one leaves no room to reach the panel's controls.
+ */
+function renderMarksTip() {
+  const tip = state.regmarksEnabled ? currentPaperType().marksTip : undefined;
+  marksTipEl.hidden = !tip;
+  if (!tip || marksTipEl.dataset.summary === tip.summary) return; // rebuilt only when it changes, so an opened one stays open
+  marksTipEl.dataset.summary = tip.summary;
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = tip.summary;
+  const detail = document.createElement("div");
+  detail.textContent = tip.detail;
+  details.append(summary, detail);
+  marksTipEl.replaceChildren(details);
 }
 
 function renderStudio3() {
@@ -1782,7 +1798,7 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
     c.statusText = controller.signal.aborted ? "Aborted" : cancelledOnCutter ? "Cancelled on the cutter — nothing more was sent" : null;
     if (!controller.signal.aborted && !cancelledOnCutter) c.error = errorText(e);
     const marksTip = currentPaperType().marksTip;
-    if (e instanceof RegmarkNotFoundError && marksTip) c.error += ` ${marksTip}`;
+    if (e instanceof RegmarkNotFoundError && marksTip) c.error += ` ${marksTip.summary} ${marksTip.detail}`;
     if (e instanceof RegmarkNotFoundError && registration === "auto") {
       c.manualRetryKind = kind;
       c.manualRetryDryRun = dryRun;

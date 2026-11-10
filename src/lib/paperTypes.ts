@@ -19,13 +19,14 @@ export interface PaperType {
   /**
    * Set when the cutter's optical sensor usually can't read registration marks printed on this
    * stock: ink is see-through on foil and film, so the sensor sees shine (or the mat) rather than
-   * matte black. The text is shown under Print, and added to a failed mark search's message.
+   * matte black. `summary` is one short line shown under Print (it opens to `detail`); both are
+   * added to a failed mark search's message.
    */
-  marksTip?: string;
+  marksTip?: { summary: string; detail: string };
 }
 
-const MATTE_PATCH_TIP =
-  "Before printing, stick matte white label paper or masking tape over the three corners where the registration marks print (about 30 mm in from each edge), so the marks print on something the cutter can see. Manual registration won't get around it: the cutter still reads the marks with its sensor.";
+const MATTE_PATCH_DETAIL =
+  "Otherwise the cutter can't find the registration marks: inkjet ink is see-through on this stock, so its sensor sees shine instead of black. Stick matte white label paper or masking tape over the three corners where the marks print (about 30 mm in from each edge), so they print on something the sensor can see. Manual registration won't get around it: the cutter still reads the marks with its sensor.";
 
 /**
  * Holographic starting point. Pale tints at 60 plus brightness -10 take a near-white like #f2f0e5
@@ -49,7 +50,7 @@ export const PAPER_TYPES: PaperType[] = [
     exportColor: "transparent",
     showBorder: false,
     cutMaterial: STICKER_PAPER,
-    marksTip: `The cutter usually can't see registration marks printed on clear film. ${MATTE_PATCH_TIP}`,
+    marksTip: { summary: "Clear film: tape over the 3 mark corners before printing.", detail: MATTE_PATCH_DETAIL },
   },
   {
     id: "holographic",
@@ -60,7 +61,7 @@ export const PAPER_TYPES: PaperType[] = [
     showBorder: false,
     cutMaterial: STICKER_PAPER,
     colorAdjust: HOLOGRAPHIC_COLOR_ADJUST,
-    marksTip: `The cutter usually can't see registration marks printed on holographic foil. ${MATTE_PATCH_TIP}`,
+    marksTip: { summary: "Holographic: tape over the 3 mark corners before printing.", detail: MATTE_PATCH_DETAIL },
   },
   {
     id: "printer-paper-20lb",

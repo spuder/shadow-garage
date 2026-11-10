@@ -526,6 +526,13 @@ select {
   border-left: 2px solid var(--accent);
   color: var(--text);
 }
+.marks-tip summary {
+  cursor: pointer;
+}
+.marks-tip details[open] > div {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
 
 .segmented {
   display: flex;
