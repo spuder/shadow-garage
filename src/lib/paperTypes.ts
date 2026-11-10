@@ -16,6 +16,8 @@ export interface PaperType {
    * is translucent with no white ink, so foil/film stocks need darker, more saturated artwork.
    */
   colorAdjust?: ColorAdjust;
+  /** Whether the Laminated box starts ticked for this stock: sheets usually laminated after printing. */
+  laminatedByDefault?: boolean;
   /**
    * Set when the cutter's optical sensor usually can't read registration marks printed on this
    * stock: ink is see-through on foil and film, so the sensor sees shine (or the mat) rather than
@@ -40,8 +42,15 @@ export const HOLOGRAPHIC_COLOR_ADJUST: ColorAdjust = { brightness: -10, contrast
 // rather than showing the real material. Holographic is allowed because it has no border fill
 // (showBorder: false), so the foil itself shows around the artwork. Both sticker stocks share the one sticker
 // cut preset; a stock that needs different settings gets its own entry in materials.ts.
+/**
+ * How many AutoBlade depth steps a laminated sheet adds to its paper type's depth: the clear
+ * overlay (about 3 mil) is one more layer for the blade to get through. Pressure is left alone,
+ * since extra pressure drags the mat on a Cameo 3.
+ */
+export const LAMINATE_EXTRA_DEPTH = 1;
+
 export const PAPER_TYPES: PaperType[] = [
-  { id: "white", name: "White sticker", adhesive: true, swatch: "#ffffff", exportColor: "#ffffff", showBorder: true, cutMaterial: STICKER_PAPER },
+  { id: "white", name: "White sticker", adhesive: true, swatch: "#ffffff", exportColor: "#ffffff", showBorder: true, cutMaterial: STICKER_PAPER, laminatedByDefault: true },
   {
     id: "clear",
     name: "Clear sticker",
@@ -60,6 +69,7 @@ export const PAPER_TYPES: PaperType[] = [
     exportColor: "transparent",
     showBorder: false,
     cutMaterial: STICKER_PAPER,
+    laminatedByDefault: true,
     colorAdjust: HOLOGRAPHIC_COLOR_ADJUST,
     marksTip: { summary: "Holographic: tape over the 3 mark corners before printing.", detail: MATTE_PATCH_DETAIL },
   },

@@ -13,7 +13,7 @@ import { renderArtworkPng, studio3StickerFor, type Studio3Image } from "./lib/st
 import studio3TemplateUrl from "./lib/studio3Template.studio3?url";
 import { printSvg } from "./lib/print";
 import { flattenForPrint } from "./lib/printArtwork";
-import { PAPER_TYPES } from "./lib/paperTypes";
+import { LAMINATE_EXTRA_DEPTH, PAPER_TYPES } from "./lib/paperTypes";
 import { getInitialTheme, applyTheme, type Theme } from "./lib/theme";
 import { isSupportedBrowser, showUnsupportedBrowserAlert } from "./lib/browserCheck";
 import { showAlert } from "./lib/alertDialog";
@@ -86,6 +86,7 @@ interface AppState {
   cutSpeed: number | null; // cutter speed chosen with the slider; null = the paper type's default
   cutPressure: number | null; // blade pressure chosen with the slider; null = the paper type's default
   cutDepth: number | null; // AutoBlade depth chosen with the slider; null = the paper type's default
+  laminated: boolean | null; // the Laminated box; null = the paper type's default (on for white and holographic stickers)
   colorAdjust: ColorAdjust | null; // artwork brightness/contrast/saturation from the sliders; null = the paper type's default
   printCutLines: boolean; // include the red cut outlines when printing (the SVG download always has them)
   regmarksEnabled: boolean;
@@ -118,6 +119,7 @@ const state: AppState = {
   cutSpeed: null,
   cutPressure: null,
   cutDepth: null,
+  laminated: null,
   colorAdjust: null,
   printCutLines: false,
   regmarksEnabled: true,
@@ -237,6 +239,7 @@ const cutPressureDefault = document.getElementById("cutPressureDefault") as HTML
 const cutDepthSlider = document.getElementById("cutDepthSlider") as HTMLInputElement;
 const cutDepthValue = document.getElementById("cutDepthValue") as HTMLSpanElement;
 const cutDepthDefault = document.getElementById("cutDepthDefault") as HTMLSpanElement;
+const laminatedToggle = document.getElementById("laminatedToggle") as HTMLInputElement;
 const copyLogBtn = document.getElementById("copyLogBtn") as HTMLButtonElement;
 const calSheetBtn = document.getElementById("calSheetBtn") as HTMLButtonElement;
 const calCutBtn = document.getElementById("calCutBtn") as HTMLButtonElement;
@@ -289,6 +292,7 @@ function addPaperSwatch(pt: (typeof PAPER_TYPES)[number]) {
     state.cutSpeed = null; // back to the new paper type's own speed, pressure and blade depth
     state.cutPressure = null;
     state.cutDepth = null;
+    state.laminated = null; // and whether it's usually laminated
     state.colorAdjust = null; // and its own colour starting point (darker for holographic)
     paperTypeGrid.querySelectorAll(".paper-swatch").forEach((el) => el.classList.toggle("active", el === btn));
     recompute();
@@ -320,9 +324,20 @@ function fmtIn(mm: number): string {
   return mmToIn(mm).toFixed(2);
 }
 
-/** Cut settings for the selected paper type, with the speed, pressure and blade depth sliders' choices if they've been moved. */
-function currentCutMaterial() {
+/** Whether the sheet is laminated: the box if it's been changed, else the paper type's default. */
+function isLaminated(): boolean {
+  return state.laminated ?? !!currentPaperType().laminatedByDefault;
+}
+
+/** The paper type's cut settings, one blade depth step deeper when the sheet is laminated: what the sliders start from. */
+function defaultCutMaterial() {
   const m = currentPaperType().cutMaterial;
+  return isLaminated() ? { ...m, autoBladeDepth: Math.min(10, m.autoBladeDepth + LAMINATE_EXTRA_DEPTH) } : m;
+}
+
+/** Cut settings for the next job: the defaults above, with the speed, pressure and blade depth sliders' choices if they've been moved. */
+function currentCutMaterial() {
+  const m = defaultCutMaterial();
   return { ...m, speed: state.cutSpeed ?? m.speed, pressure: state.cutPressure ?? m.pressure, autoBladeDepth: state.cutDepth ?? m.autoBladeDepth };
 }
 
@@ -529,6 +544,7 @@ function render() {
   });
   rotateToggle.checked = state.allowRotation;
   regmarksToggle.checked = state.regmarksEnabled;
+  laminatedToggle.checked = isLaminated();
   renderMarksTip();
   regmarkStyleToggle.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("active", (b as HTMLButtonElement).dataset.style === state.regmarkStyle);
@@ -1757,7 +1773,7 @@ function renderCutter() {
   else cutterStatusEl.textContent = "Not connected";
 
   const m = currentCutMaterial();
-  const { speed: defaultSpeed, pressure: defaultPressure, autoBladeDepth: defaultDepth } = currentPaperType().cutMaterial;
+  const { speed: defaultSpeed, pressure: defaultPressure, autoBladeDepth: defaultDepth } = defaultCutMaterial();
   cutterMaterialEl.textContent = `Cut settings: ${m.name} (set by Paper Type)`;
   if (c.session) cutSpeedSlider.max = String(c.session.model.speedRange[1]); // keeps the last cutter's range while disconnected
   cutSpeedSlider.value = String(m.speed);
@@ -1770,7 +1786,8 @@ function renderCutter() {
   cutPressureSlider.disabled = running;
   cutDepthSlider.value = String(m.autoBladeDepth);
   cutDepthValue.textContent = String(m.autoBladeDepth);
-  cutDepthDefault.textContent = m.autoBladeDepth === defaultDepth ? "(Paper Type default)" : `(Paper Type default ${defaultDepth})`;
+  const depthSource = isLaminated() ? "Paper Type default, laminated" : "Paper Type default";
+  cutDepthDefault.textContent = m.autoBladeDepth === defaultDepth ? `(${depthSource})` : `(${depthSource} ${defaultDepth})`;
   cutDepthSlider.disabled = running;
 
   // Opens the connection dialog, or disconnects whichever link is in use.
@@ -2054,19 +2071,25 @@ colorAdjustResetBtn.addEventListener("click", () => {
 
 cutSpeedSlider.addEventListener("input", () => {
   const speed = parseInt(cutSpeedSlider.value, 10);
-  state.cutSpeed = speed === currentPaperType().cutMaterial.speed ? null : speed;
+  state.cutSpeed = speed === defaultCutMaterial().speed ? null : speed;
   renderCutter();
 });
 
 cutPressureSlider.addEventListener("input", () => {
   const pressure = parseInt(cutPressureSlider.value, 10);
-  state.cutPressure = pressure === currentPaperType().cutMaterial.pressure ? null : pressure;
+  state.cutPressure = pressure === defaultCutMaterial().pressure ? null : pressure;
   renderCutter();
+});
+
+laminatedToggle.addEventListener("change", () => {
+  state.laminated = laminatedToggle.checked === !!currentPaperType().laminatedByDefault ? null : laminatedToggle.checked;
+  state.cutDepth = null; // let the blade depth follow: one step deeper laminated, back to the paper type's without
+  render();
 });
 
 cutDepthSlider.addEventListener("input", () => {
   const depth = parseInt(cutDepthSlider.value, 10);
-  state.cutDepth = depth === currentPaperType().cutMaterial.autoBladeDepth ? null : depth;
+  state.cutDepth = depth === defaultCutMaterial().autoBladeDepth ? null : depth;
   renderCutter();
 });
 
