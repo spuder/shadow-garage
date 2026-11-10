@@ -599,6 +599,16 @@ select {
   border: 1px solid var(--border);
   color: var(--text);
 }
+/* Send to Cutter while a job runs: the stop button. A fixed bright red in both themes, with white
+   text at about 5:1 contrast, so it reads as "stop" at a glance. */
+.btn-primary.btn-abort {
+  background: #dc1414;
+  color: #ffffff;
+}
+.btn-primary.btn-abort:hover {
+  background: #f01818;
+  filter: none;
+}
 .btn-primary:disabled,
 .btn-secondary:disabled {
   opacity: 0.4;
