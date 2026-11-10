@@ -58,7 +58,9 @@ step. Vite's `base` is `/shadow-garage/`, so the dev URL is
 their file instead of being traced (`scaleDesign()` in `design.ts` resizes it) until their margin
 or sharp-corners setting is changed. Then `startTracing()` switches them to an outline traced from
 their artwork, keeping the artwork's size: from its transparency, or for artwork on a plain page
-(Studio's usual white background) from everything that isn't that page (`artworkMask.ts`). Artwork
+(Studio's usual white background) from everything that isn't that page. That page, with any faint
+die-line drawn on it, is made transparent on import (`prepareImportedArtwork()` in
+`artworkMask.ts`), so the border shows the paper type's color as an upload's does. Artwork
 that's neither stays locked to the file's outline. Export writes a re-traced sticker as a new
 record, since a file's record can only be moved and resized. Imported stickers are *pinned*:
 they sit where the file put them or where the user dragged them, and `computeSheetItems()` passes

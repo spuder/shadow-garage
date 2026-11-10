@@ -1,6 +1,6 @@
 import "./style.css";
 import { extractAlphaMask, type RawMask } from "./lib/trace";
-import { artworkMask, type ArtworkMask } from "./lib/artworkMask";
+import { prepareImportedArtwork, type ArtworkMask } from "./lib/artworkMask";
 import { computeDesign, scaleDesign, type DesignResult } from "./lib/design";
 import { translateContours } from "./lib/geometry";
 import { SHEET_SIZES, nudgeIntoArea, packMixedSheet, stickerKeepout, type KeepoutRect, type MixedPlacement, type SheetSize } from "./lib/sheet";
@@ -1070,9 +1070,10 @@ async function importStudio3(file: File): Promise<boolean> {
     for (const { imageId, artwork } of doc.stickers) {
       if (!artwork || imageUrls.has(imageId)) continue;
       const image = doc.images.get(imageId)!;
-      const url = await readAsDataURL(new Blob([image.bytes.slice()], { type: image.mime }));
-      imageUrls.set(imageId, url);
-      masks.set(imageId, await artworkMask(url));
+      // A plain page around the artwork is made transparent, so the paper shows around it.
+      const prepared = await prepareImportedArtwork(await readAsDataURL(new Blob([image.bytes.slice()], { type: image.mime })));
+      imageUrls.set(imageId, prepared.imageDataUrl);
+      masks.set(imageId, prepared.mask);
     }
   } catch (e) {
     state.studio3Status = { text: `Couldn't import ${file.name}: ${errorText(e)}`, error: true };
