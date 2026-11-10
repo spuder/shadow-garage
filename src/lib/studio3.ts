@@ -37,9 +37,21 @@
 // name as u64 length + text, u64 width, u64 height and more), a u64 data length and the file's
 // bytes as imported.
 //
+// The style block ends with the outline again, in image pixels. It is laid out like a page
+// outline, except that each subpath and each point is a block of its own (a subpath block holds
+// the closed flag, the last-point index and the point blocks), and a point ends with three more
+// bytes: 00 01 00 for a point with both handles, 00 00 00 otherwise. The image id sits earlier in
+// the style block as a u32 32 and the hex digits, and the serial is just a number: copies of a
+// sticker share their image, and the name block's trailing id is the same for all of them.
+//
 // Writing only ever touches bytes it understands: a moved or resized sticker has its matrix,
 // centre, extents and page outline rewritten in place, and a deleted one has its record cut out
-// and the sizes around it adjusted. Everything else in the file is passed through untouched.
+// and the sizes around it adjusted. A new sticker is a copy of an existing sticker's record (the
+// document's own, or studio3Template.studio3's) with its image id, both outlines, matrix, centre,
+// extents, serial and name replaced; its image is appended to the image store. Studio 5.0.539
+// opens such a file, shows the artwork and cut lines, and builds the cut job from them. Everything
+// else in the file is passed through untouched, including the cached cut job in sections 4 to 6
+// and images no sticker uses any more.
 
 import { boundingBox, type Contour } from "./geometry";
 
@@ -469,12 +481,24 @@ export function parseStudio3(bytes: Uint8Array): Studio3Document {
   }
 }
 
+export interface Studio3WriteOptions {
+  /** Stickers to add to the file, after its own. */
+  add?: Studio3NewSticker[];
+  /** A document to copy new stickers' records from when `doc` has no sticker with artwork. */
+  template?: Studio3Document;
+}
+// The page size isn't written: Studio sizes the page from a media preset in the page block
+// ("constant:letter", with print and cut borders worked out from it) and a copy of the page
+// settings after the root block, not from the width and height the reader takes it from.
+
 /**
- * The document's file with its stickers moved and resized to `placements`. Stickers without a
- * placement are deleted from it. Stickers left where they were keep their bytes exactly.
+ * The document's file with its stickers moved and resized to `placements`, and `options.add`
+ * added. Stickers without a placement are deleted from it. Stickers left where they were keep
+ * their bytes exactly.
  */
-export function writeStudio3(doc: Studio3Document, placements: Studio3Placement[]): Uint8Array {
+export function writeStudio3(doc: Studio3Document, placements: Studio3Placement[], options: Studio3WriteOptions = {}): Uint8Array {
   const { bytes, root, list, records } = doc.source;
+  const added = options.add ?? [];
   const out = bytes.slice();
   const view = new DataView(out.buffer);
   const get = (at: number) => view.getFloat32(at, true);
@@ -521,26 +545,253 @@ export function writeStudio3(doc: Studio3Document, placements: Studio3Placement[
   }
 
   const removed = records.filter((_, i) => !kept.has(i)).map((rec) => rec.block);
-  if (removed.length === 0) return out;
+  if (removed.length === 0 && added.length === 0) return out;
 
-  // Cut the deleted records out. Every size that covers them sits earlier in the file, so those
-  // stay where they are and just get smaller.
+  // New stickers go in right after the last of the file's own (or where it was), so they sit on
+  // the same layer. Their artwork is appended to the image store, once per distinct image object:
+  // stickers that share one, like copies of a sticker in Studio, share its entry.
+  const r = new Reader(bytes);
+  const template = added.length > 0 ? stickerTemplate(doc) ?? (options.template && stickerTemplate(options.template)) : null;
+  if (added.length > 0 && !template) throw new Studio3Error("This .studio3 file has no sticker with artwork to copy new stickers from.");
+  let serial = maxSerial(r, list) + 1;
+  const newRecords: Uint8Array[] = [];
+  const newImages: Uint8Array[] = [];
+  const imageIds = new Map<Studio3NewSticker["image"], string>();
+  for (const sticker of added) {
+    let id = imageIds.get(sticker.image);
+    if (!id) {
+      id = randomImageId();
+      imageIds.set(sticker.image, id);
+      newImages.push(buildImageEntry(sticker.image, id));
+    }
+    newRecords.push(buildRecord(template!, sticker, id, serial++));
+  }
+  const insertAt = records.length > 0 ? records[records.length - 1].block.end : blockList(r, list)!.at(-1)!.start;
+  const addedRecordBytes = newRecords.reduce((sum, b) => sum + b.length, 0);
+  const addedImageBytes = newImages.reduce((sum, b) => sum + b.length, 0);
+
+  const sections = readSections(r);
+  const store = sections[1];
+  const storeEmpty = store.end - store.start < 17 || r.isU64Max(store.start + 9);
+
+  // Splice: cut the deleted records out and put the new ones and their images in. Every size that
+  // covers either sits earlier in the file than both, so those stay where they are.
   const removedBytes = removed.reduce((sum, b) => sum + (b.end - b.start), 0);
-  const result = new Uint8Array(out.length - removedBytes);
+  const edits: { at: number; cut: number; insert: Uint8Array[] }[] = [
+    ...removed.map((b) => ({ at: b.start, cut: b.end - b.start, insert: [] })),
+    ...(newRecords.length ? [{ at: insertAt, cut: 0, insert: newRecords }] : []),
+    ...(newImages.length ? [{ at: store.end, cut: 0, insert: newImages }] : []),
+  ].sort((a, b) => a.at - b.at || a.cut - b.cut);
+  const result = new Uint8Array(out.length - removedBytes + addedRecordBytes + addedImageBytes);
   let from = 0;
   let to = 0;
-  for (const block of removed) {
-    result.set(out.subarray(from, block.start), to);
-    to += block.start - from;
-    from = block.end;
+  for (const edit of edits) {
+    result.set(out.subarray(from, edit.at), to);
+    to += edit.at - from;
+    for (const chunk of edit.insert) {
+      result.set(chunk, to);
+      to += chunk.length;
+    }
+    from = edit.at + edit.cut;
   }
   result.set(out.subarray(from), to);
 
   const sizes = new DataView(result.buffer);
-  const shrink = (at: number, by: number) => sizes.setUint32(at, sizes.getUint32(at, true) - by, true);
-  shrink(list.body, removed.length); // the list's last index
-  shrink(list.start + 1, removedBytes);
-  shrink(root.start + 1, removedBytes);
-  sizes.setBigUint64(SIZE_TABLE_OFFSET, sizes.getBigUint64(SIZE_TABLE_OFFSET, true) - BigInt(removedBytes), true);
+  const grow = (at: number, by: number) => sizes.setUint32(at, sizes.getUint32(at, true) + by, true);
+  const docDelta = addedRecordBytes - removedBytes;
+  grow(list.body, newRecords.length - removed.length); // the list's last index
+  grow(list.start + 1, docDelta);
+  grow(root.start + 1, docDelta);
+  sizes.setBigUint64(SIZE_TABLE_OFFSET, sizes.getBigUint64(SIZE_TABLE_OFFSET, true) + BigInt(docDelta), true);
+  if (newImages.length > 0) {
+    // The store moved by however much the document changed.
+    const storeAt = store.start + docDelta;
+    if (storeEmpty) throw new Studio3Error("This .studio3 file has no image store to add artwork to."); // not reached: a template sticker means it has one
+    sizes.setBigUint64(storeAt + 1, sizes.getBigUint64(storeAt + 1, true) + BigInt(addedImageBytes), true);
+    sizes.setBigUint64(storeAt + 9, sizes.getBigUint64(storeAt + 9, true) + BigInt(newImages.length), true);
+    sizes.setBigUint64(SIZE_TABLE_OFFSET + 8, sizes.getBigUint64(SIZE_TABLE_OFFSET + 8, true) + BigInt(addedImageBytes), true);
+  }
   return result;
+}
+
+/** A sticker that isn't in the file yet: artwork and a cut outline, both placed on the page in mm. */
+export interface Studio3NewSticker {
+  name: string;
+  image: { bytes: Uint8Array; widthPx: number; heightPx: number }; // PNG
+  imageRect: { x: number; y: number; width: number; height: number };
+  contours: Contour[];
+}
+
+/** The parts of an existing sticker record that a new one is built from. */
+interface StickerTemplate {
+  styleHead: Uint8Array; // the style block's body up to its pixel outline, with the image id at idAt
+  idAt: number;
+  afterExtents: Uint8Array; // the u32 and u8 between the half extents and the page outline
+  afterSerial: Uint8Array; // the block before the name
+  afterName: Uint8Array; // the rest of the record
+}
+
+/** The first sticker in the document with artwork and no shape text, whose record new stickers copy; null if there's none. */
+function stickerTemplate(doc: Studio3Document): StickerTemplate | null {
+  const r = new Reader(doc.source.bytes);
+  const i = doc.stickers.findIndex((s, i) => s.artwork && !doc.source.records[i].params);
+  if (i < 0) return null;
+  const { block, matrixAt } = doc.source.records[i];
+  const style = blockAt(r, block.body + 1, block.end)!;
+  let pixelPath: Block | null = null;
+  for (let at = style.body; at < style.end && !pixelPath; at++) {
+    const b = blockAt(r, at, style.end);
+    if (b && b.end === style.end && readPixelPath(r, b)) pixelPath = b;
+  }
+  if (!pixelPath) throw new Studio3Error("Couldn't find the outline of the sticker that new ones are copied from.");
+  const id = doc.stickers[i].imageId;
+  let idAt = -1;
+  for (let at = style.body; at + 36 <= pixelPath.start; at++) {
+    if (r.u32(at) === 32 && r.text(at + 4, 32) === id) {
+      idAt = at + 4 - style.body;
+      break;
+    }
+  }
+  const pathBlock = blockAt(r, matrixAt + PATH_OFFSET, block.end)!;
+  const nameBlock = blockAt(r, pathBlock.end + 9, block.end);
+  if (idAt < 0 || r.u8(pathBlock.end) !== 1 || !nameBlock) throw new Studio3Error("Couldn't read the sticker that new ones are copied from.");
+  const nameEnd = nameBlock.end + 4 + r.u32(nameBlock.end);
+  return {
+    styleHead: r.bytes.slice(style.body, pixelPath.start),
+    idAt,
+    afterExtents: r.bytes.slice(matrixAt + 60, matrixAt + PATH_OFFSET),
+    afterSerial: r.bytes.slice(nameBlock.start, nameBlock.end),
+    afterName: r.bytes.slice(nameEnd, block.end),
+  };
+}
+
+/**
+ * Whether the block is an outline in image pixels, as a sticker's style block ends with. It is laid
+ * out like a page outline, but each subpath and each point is a block of its own, and a point
+ * ends with three more bytes.
+ */
+function readPixelPath(r: Reader, block: Block): boolean {
+  if (block.end - block.body < 4) return false;
+  const last = r.u32(block.body);
+  const subpaths = blockRun(r, block.body + 4, block.end);
+  if (subpaths.length !== last + 1 || subpaths[last].end !== block.end) return false;
+  return subpaths.every((s) => {
+    if (s.end - s.body < 5) return false;
+    const points = blockRun(r, s.body + 5, s.end);
+    return points.length === r.u32(s.body + 1) + 1 && points[points.length - 1].end === s.end;
+  });
+}
+
+/** The largest serial number of any object in the list. */
+function maxSerial(r: Reader, list: Block): number {
+  let max = 0;
+  for (const entry of blockList(r, list) ?? []) {
+    const style = blockAt(r, entry.body + 1, entry.end);
+    const path = style && blockAt(r, style.end + PATH_OFFSET, entry.end);
+    if (path && r.u8(path.end) === 1 && path.end + 9 <= entry.end) max = Math.max(max, r.u64(path.end + 1));
+  }
+  return max;
+}
+
+function randomImageId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Builds byte strings little-endian. */
+class Writer {
+  private parts: number[] = [];
+  u8(v: number) {
+    this.parts.push(v & 0xff);
+    return this;
+  }
+  u32(v: number) {
+    for (let i = 0; i < 4; i++) this.parts.push((v >>> (8 * i)) & 0xff);
+    return this;
+  }
+  u64(v: number) {
+    return this.u32(v % 2 ** 32).u32(Math.floor(v / 2 ** 32));
+  }
+  f32(v: number) {
+    const b = new Uint8Array(4);
+    new DataView(b.buffer).setFloat32(0, v, true);
+    return this.raw(b);
+  }
+  raw(b: Uint8Array) {
+    for (const x of b) this.parts.push(x);
+    return this;
+  }
+  text(s: string) {
+    return this.raw(new TextEncoder().encode(s));
+  }
+  /** This writer's bytes as a block: the marker, a u32 size counting itself, then the body. */
+  block(): Uint8Array {
+    return new Writer().u8(1).u32(4 + this.parts.length).raw(this.bytes()).bytes();
+  }
+  bytes(): Uint8Array {
+    return Uint8Array.from(this.parts);
+  }
+}
+
+function buildRecord(t: StickerTemplate, s: Studio3NewSticker, imageId: string, serial: number): Uint8Array {
+  const sx = s.imageRect.width / s.image.widthPx;
+  const sy = s.imageRect.height / s.image.heightPx;
+  const contours = s.contours.filter((c) => c.length >= 3);
+  if (contours.length === 0) throw new Studio3Error(`"${s.name}" has no outline to cut.`);
+
+  // The outline in image pixels: subpaths and points are blocks, points have no curve handles.
+  const pixel = new Writer().u32(contours.length - 1);
+  for (const c of contours) {
+    const sub = new Writer().u8(1).u32(c.length - 1);
+    for (const [x, y] of c) {
+      sub.raw(new Writer().f32((x - s.imageRect.x) / sx).f32((y - s.imageRect.y) / sy).u8(0).u8(0).u8(0).u8(0).u8(0).block());
+    }
+    pixel.raw(sub.block());
+  }
+  const head = t.styleHead.slice();
+  head.set(new TextEncoder().encode(imageId), t.idAt);
+  const style = new Writer().raw(head).raw(pixel.block()).block();
+
+  // The outline on the page, in mm.
+  const page = new Writer().u32(contours.length - 1);
+  for (const c of contours) {
+    const sub = new Writer().u8(1).u32(c.length - 1);
+    for (const [x, y] of c) sub.f32(x).f32(y).u8(0).u8(0);
+    const body = sub.bytes();
+    page.u32(4 + body.length).raw(body);
+  }
+
+  const box = boundingBox(contours);
+  const name = new TextEncoder().encode(s.name.slice(0, 200));
+  return new Writer()
+    .u8(0)
+    .raw(style)
+    .f32(sx).f32(0).f32(s.imageRect.x)
+    .f32(0).f32(sy).f32(s.imageRect.y)
+    .f32(0).f32(0).f32(1)
+    .f32((box.minX + box.maxX) / 2).f32((box.minY + box.maxY) / 2)
+    .f32((box.maxX - box.minX) / 2).f32(0).f32(0).f32((box.maxY - box.minY) / 2)
+    .raw(t.afterExtents)
+    .raw(page.block())
+    .u8(1).u64(serial)
+    .raw(t.afterSerial)
+    .u32(name.length).raw(name)
+    .raw(t.afterName)
+    .block();
+}
+
+/**
+ * An image store entry. Its description is the one Studio 5.0.539 writes for every image when it
+ * saves (format "unknown", 300, 32 bits): a file with a PNG described as Studio describes a fresh
+ * import ("", 72, 32, 6) opens too, and Studio rewrites it like this on its next save.
+ */
+function buildImageEntry(image: Studio3NewSticker["image"], id: string): Uint8Array {
+  const about = new Writer().u64(7).text("unknown").u64(image.widthPx).u64(image.heightPx).u64(300).u64(32).u64(0).u64(0x3e0).u8(0).bytes();
+  const body = new Writer()
+    .u64(id.length).text(id)
+    .u64(8 + about.length).raw(about)
+    .u64(image.bytes.length).raw(image.bytes)
+    .u64(0)
+    .bytes();
+  return new Writer().u64(8 + body.length).raw(body).bytes();
 }

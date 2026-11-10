@@ -7,7 +7,9 @@ import { buildSingleStickerSVG, buildSheetSVG, type RenderOptions, type SheetIte
 import { bakeColorAdjust, COLOR_ADJUST_KEYS, isNoColorAdjust, NO_COLOR_ADJUST, type ColorAdjust } from "./lib/colorAdjust";
 import { getRegmarkKeepoutRects, REGMARK_ORIGIN_MM } from "./lib/regmarks";
 import { downloadBlob, downloadSvgString } from "./lib/download";
-import { parseStudio3, writeStudio3, type Studio3Document } from "./lib/studio3";
+import { parseStudio3, writeStudio3, type Studio3Document, type Studio3Placement } from "./lib/studio3";
+import { renderArtworkPng, studio3StickerFor, type Studio3Image } from "./lib/studio3Artwork";
+import studio3TemplateUrl from "./lib/studio3Template.studio3?url";
 import { printSvg } from "./lib/print";
 import { flattenForPrint } from "./lib/printArtwork";
 import { PAPER_TYPES } from "./lib/paperTypes";
@@ -557,14 +559,10 @@ function syncSelectionControls() {
 }
 
 function renderStudio3() {
-  // With none of the file's stickers left on the sheet there's nothing to write back: it would only delete them all.
-  const hasFileStickers = state.designs.some((d) => d.imported && d.pinned);
-  exportStudio3Btn.disabled = !state.studio3 || !hasFileStickers;
-  exportStudio3Btn.title = !state.studio3
-    ? "Import a .studio3 file first — Export writes your changes back into it"
-    : hasFileStickers
-      ? `Save ${state.studio3.fileName} with the stickers where they are now`
-      : `None of the stickers from ${state.studio3.fileName} are on the sheet any more`;
+  exportStudio3Btn.disabled = state.lastPlacements.length === 0;
+  exportStudio3Btn.title = state.studio3
+    ? `Save ${state.studio3.fileName} with the stickers on the sheet as they are now`
+    : "Save the sheet as a Silhouette Studio file";
   studio3StatusEl.hidden = !state.studio3Status;
   studio3StatusEl.textContent = state.studio3Status?.text ?? "";
   studio3StatusEl.classList.toggle("cutter-error", !!state.studio3Status?.error);
@@ -1128,44 +1126,83 @@ studio3Input.addEventListener("change", () => {
   if (file) void importStudio3(file);
 });
 
-exportStudio3Btn.addEventListener("click", async () => {
+/** The empty Studio document a sheet that didn't come from a file is written into (see studio3.test.ts). */
+async function loadStudio3Template(): Promise<Studio3Document> {
+  const response = await fetch(studio3TemplateUrl);
+  if (!response.ok) throw new Error(`couldn't load the starting file (${response.status})`);
+  return parseStudio3(new Uint8Array(await response.arrayBuffer()));
+}
+
+/**
+ * Saves the sheet as a .studio3 file: the imported file with its stickers moved, resized or
+ * deleted as they are now, or the bundled empty document, plus every other sticker on the sheet
+ * as a new one with its artwork and traced outline.
+ */
+async function exportStudio3() {
   const source = state.studio3;
-  if (!source) return;
-  // Only stickers that came from the file can be written back to it.
-  const fromFile = state.designs.filter((d) => d.imported && d.pinned && d.design);
-  const added = state.designs.length - fromFile.length;
-  if (added > 0) {
-    const go = await showAlert({
-      title: `${added} sticker${added === 1 ? "" : "s"} won't be in the file`,
-      body:
-        `Stickers added in Shadow Garage can't be saved into a .studio3 file yet, so ${added === 1 ? "it" : "they"} will be missing when you open the file in Silhouette Studio. ` +
-        "Stickers from the original file, including any you moved, resized or deleted, are saved.",
-      confirmLabel: "Export anyway",
-      cancelLabel: "Cancel",
-    });
-    if (!go) return;
+  const sheet = currentSheet();
+  const placements: Studio3Placement[] = [];
+  const toAdd: { d: StickerDesign; p: MixedPlacement }[] = [];
+  const written = new Set<string>();
+  for (const p of state.lastPlacements) {
+    const d = state.designs.find((dd) => dd.id === p.id);
+    if (!d?.design) continue;
+    // A sticker from the file is written back into its own record; any other is added.
+    if (source && d.imported && d.pinned && !written.has(d.id)) {
+      written.add(d.id);
+      placements.push({
+        index: d.imported.studio3Index,
+        x: d.pinned.x,
+        y: d.pinned.y,
+        scaleX: d.design.actualWmm / d.imported.base.actualWmm,
+        scaleY: d.design.actualHmm / d.imported.base.actualHmm,
+      });
+    } else toAdd.push({ d, p });
   }
+
   try {
-    const bytes = writeStudio3(
-      source.doc,
-      fromFile.map((d) => ({
-        index: d.imported!.studio3Index,
-        x: d.pinned!.x,
-        y: d.pinned!.y,
-        scaleX: d.design!.actualWmm / d.imported!.base.actualWmm,
-        scaleY: d.design!.actualHmm / d.imported!.base.actualHmm,
-      }))
+    // One PNG per sticker and way round, shared by all its copies.
+    const adjust = currentColorAdjust();
+    const images = new Map<string, Promise<Studio3Image>>();
+    const imageFor = (d: StickerDesign, rotated: boolean) => {
+      const key = `${d.id}|${rotated}`;
+      let image = images.get(key);
+      if (!image) {
+        const { width, height } = d.design!.imagePlacementMM;
+        image = renderArtworkPng(d.imageDataUrl, adjust, width, height, rotated);
+        images.set(key, image);
+      }
+      return image;
+    };
+    const add = await Promise.all(
+      toAdd.map(async ({ d, p }) => studio3StickerFor(d.design!, p.x, p.y, p.rotated, d.fileName.replace(/\.[^.]+$/, ""), await imageFor(d, p.rotated)))
     );
-    const name = `${source.fileName.replace(/\.studio3$/i, "")}-edited.studio3`;
+    const template = toAdd.length > 0 || !source ? await loadStudio3Template() : undefined;
+    const doc = source?.doc ?? template!;
+    const bytes = writeStudio3(doc, placements, { add, template });
+    const name = source ? `${source.fileName.replace(/\.studio3$/i, "")}-edited.studio3` : "stickers-sheet.studio3";
     downloadBlob(new Blob([bytes.slice()], { type: "application/octet-stream" }), name);
-    let text = `Saved ${name} with ${fromFile.length} sticker${fromFile.length === 1 ? "" : "s"}.`;
-    if (added > 0) text += ` ${added} added here ${added === 1 ? "isn't" : "aren't"} in it: only stickers that came from the .studio3 file can be written back.`;
+    const total = placements.length + add.length;
+    let text = `Saved ${name} with ${total} sticker${total === 1 ? "" : "s"}`;
+    if (source && add.length > 0) text += `: ${placements.length} from ${source.fileName} and ${add.length} added here`;
+    text += ".";
+    // The file keeps its own page size (Letter for a new one): Studio's media setting can't be written yet.
+    const samePage = doc.pageWidthMm !== null && doc.pageHeightMm !== null && Math.abs(doc.pageWidthMm - sheet.widthMm) < 0.5 && Math.abs(doc.pageHeightMm - sheet.heightMm) < 0.5;
+    if (!samePage) text += ` In Silhouette Studio, set Media Size to ${sheet.name} in Page Setup.`;
+    if (!source) text += " Tick Enable Registration Marks in Studio's Print & Cut panel before printing.";
     state.studio3Status = { text, error: false };
   } catch (e) {
+    console.error(e);
     state.studio3Status = { text: `Couldn't export: ${errorText(e)}`, error: true };
   }
-  renderStudio3();
-});
+}
+
+exportStudio3Btn.addEventListener("click", () =>
+  withBusyButton(exportStudio3Btn, async () => {
+    await exportStudio3();
+    renderStudio3();
+  })
+);
 
 // ---- image upload ----
 // Each SVG warning is shown once per page load, so it informs without nagging.
