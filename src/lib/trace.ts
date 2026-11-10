@@ -6,10 +6,14 @@ export interface RawMask {
   width: number;
   height: number;
   rawBBox: { minX: number; minY: number; maxX: number; maxY: number }; // bbox of the un-dilated silhouette, in mask px
+  imageBox?: { x: number; y: number; width: number; height: number }; // where the whole image was drawn, in mask px (inside the padding)
 }
 
-/** Downscales the image onto an offscreen canvas and thresholds the alpha channel into a binary mask. */
-export function extractAlphaMask(img: HTMLImageElement | HTMLCanvasElement, maskLongEdge = 500, alphaThreshold = 16): RawMask {
+/**
+ * Draws the image downscaled (long edge `maskLongEdge`) onto a canvas with transparent padding
+ * around it, and returns the pixels with where the image sits in them.
+ */
+export function rasterizeForMask(img: HTMLImageElement | HTMLCanvasElement, maskLongEdge = 500): { pixels: Uint8ClampedArray; width: number; height: number; imageBox: { x: number; y: number; width: number; height: number } } {
   const srcW = "naturalWidth" in img ? img.naturalWidth : img.width;
   const srcH = "naturalHeight" in img ? img.naturalHeight : img.height;
   const scale = maskLongEdge / Math.max(srcW, srcH);
@@ -29,21 +33,19 @@ export function extractAlphaMask(img: HTMLImageElement | HTMLCanvasElement, mask
   canvas.height = height;
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, pad, pad, drawW, drawH);
-  const imgData = ctx.getImageData(0, 0, width, height);
+  return { pixels: ctx.getImageData(0, 0, width, height).data, width, height, imageBox: { x: pad, y: pad, width: drawW, height: drawH } };
+}
 
-  const data = new Uint8Array(width * height);
+/** A mask from 0/1 data, with the bbox of its 1s (the whole mask, all set, if there are none). */
+export function maskFromData(data: Uint8Array, width: number, height: number, imageBox?: RawMask["imageBox"]): RawMask {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const alpha = imgData.data[(y * width + x) * 4 + 3];
-      const inside = alpha >= alphaThreshold ? 1 : 0;
-      data[y * width + x] = inside;
-      if (inside) {
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
+      if (!data[y * width + x]) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
     }
   }
   if (minX === Infinity) {
@@ -51,7 +53,15 @@ export function extractAlphaMask(img: HTMLImageElement | HTMLCanvasElement, mask
     minX = 0; minY = 0; maxX = width - 1; maxY = height - 1;
     data.fill(1);
   }
-  return { data, width, height, rawBBox: { minX, minY, maxX: maxX + 1, maxY: maxY + 1 } };
+  return { data, width, height, rawBBox: { minX, minY, maxX: maxX + 1, maxY: maxY + 1 }, imageBox };
+}
+
+/** Downscales the image onto an offscreen canvas and thresholds the alpha channel into a binary mask. */
+export function extractAlphaMask(img: HTMLImageElement | HTMLCanvasElement, maskLongEdge = 500, alphaThreshold = 16): RawMask {
+  const { pixels, width, height, imageBox } = rasterizeForMask(img, maskLongEdge);
+  const data = new Uint8Array(width * height);
+  for (let i = 0; i < data.length; i++) data[i] = pixels[i * 4 + 3] >= alphaThreshold ? 1 : 0;
+  return maskFromData(data, width, height, imageBox);
 }
 
 /**

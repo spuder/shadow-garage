@@ -1,5 +1,6 @@
 import "./style.css";
 import { extractAlphaMask, type RawMask } from "./lib/trace";
+import { artworkMask, type ArtworkMask } from "./lib/artworkMask";
 import { computeDesign, scaleDesign, type DesignResult } from "./lib/design";
 import { translateContours } from "./lib/geometry";
 import { SHEET_SIZES, nudgeIntoArea, packMixedSheet, stickerKeepout, type KeepoutRect, type MixedPlacement, type SheetSize } from "./lib/sheet";
@@ -53,7 +54,7 @@ interface StickerDesign {
   id: string;
   fileName: string;
   imageDataUrl: string;
-  raw: RawMask | null; // the artwork's alpha mask, for tracing; null when the outline was imported instead
+  raw: RawMask | null; // the artwork's alpha mask, for tracing; null for an imported sticker whose artwork has nothing to trace
   artworkAspect: number;
   widthMm: number;
   heightMm: number;
@@ -64,7 +65,10 @@ interface StickerDesign {
   design: DesignResult | null;
   // Set for a sticker read from a .studio3 file: its outline and artwork at the size they have
   // there, and which of the file's stickers it is (for writing the file back).
-  imported: { base: DesignResult; studio3Index: number } | null;
+  // `artWidthMm` is how wide the artwork's opaque part is at the file's size, when the artwork
+  // has a transparent background (then `raw` holds its mask); null when it can't be traced.
+  // `traced` turns true once the margin is changed: the outline is then traced like an upload's.
+  imported: { base: DesignResult; studio3Index: number; artWidthMm: number | null; traced: boolean } | null;
   pinned: { x: number; y: number } | null; // its own spot on the sheet (top-left); the packer works around it
 }
 
@@ -440,7 +444,7 @@ function pinnedWarning(sheet: SheetSize): string {
 
 /** Traces the sticker's artwork at its current size, or resizes the outline it was imported with. */
 function buildDesign(d: StickerDesign, aspectLocked = d.aspectLocked, driveBy = d.driveBy): DesignResult {
-  if (d.imported) return scaleDesign(d.imported.base, d.widthMm, d.heightMm, aspectLocked, driveBy);
+  if (d.imported && !d.imported.traced) return scaleDesign(d.imported.base, d.widthMm, d.heightMm, aspectLocked, driveBy);
   return computeDesign(d.raw!, d.widthMm, d.heightMm, d.marginMm, aspectLocked, driveBy, d.preserveSharpCorners);
 }
 
@@ -547,14 +551,17 @@ function syncSelectionControls() {
   if (document.activeElement !== marginInput) marginInput.value = margin.toFixed(1);
   marginSlider.value = String(margin);
   sharpCornersToggle.checked = sel?.preserveSharpCorners ?? state.preserveSharpCorners;
-  // An imported sticker keeps the outline it came with, so there's no margin to trace it at.
-  const outlineImported = !!sel?.imported;
-  marginInput.disabled = marginSlider.disabled = sharpCornersToggle.disabled = outlineImported;
-  marginForEl.textContent = outlineImported
-    ? "— this sticker keeps the outline from its .studio3 file"
-    : sel && state.designs.length > 1
-      ? `for ${sel.fileName}`
-      : "";
+  // An imported sticker keeps the outline it came with until its margin is changed; artwork with
+  // neither a transparent nor a plain background has nothing to trace, so it always keeps it.
+  const untraceable = !!sel?.imported && !sel.raw;
+  marginInput.disabled = marginSlider.disabled = sharpCornersToggle.disabled = untraceable;
+  marginForEl.textContent = untraceable
+    ? "— this sticker keeps the outline from its .studio3 file: its artwork has no transparent or plain background to trace around"
+    : sel?.imported && !sel.imported.traced
+      ? "— changing it re-traces this sticker's outline from its artwork"
+      : sel && state.designs.length > 1
+        ? `for ${sel.fileName}`
+        : "";
 }
 
 function renderStudio3() {
@@ -1058,11 +1065,14 @@ async function importStudio3(file: File): Promise<boolean> {
   if (state.designs.length > 0 && !confirm(`Importing ${file.name} replaces the stickers on the current sheet. Continue?`)) return false;
 
   const imageUrls = new Map<string, string>();
+  const masks = new Map<string, ArtworkMask | null>();
   try {
     for (const { imageId, artwork } of doc.stickers) {
       if (!artwork || imageUrls.has(imageId)) continue;
       const image = doc.images.get(imageId)!;
-      imageUrls.set(imageId, await readAsDataURL(new Blob([image.bytes.slice()], { type: image.mime })));
+      const url = await readAsDataURL(new Blob([image.bytes.slice()], { type: image.mime }));
+      imageUrls.set(imageId, url);
+      masks.set(imageId, await artworkMask(url));
     }
   } catch (e) {
     state.studio3Status = { text: `Couldn't import ${file.name}: ${errorText(e)}`, error: true };
@@ -1079,11 +1089,12 @@ async function importStudio3(file: File): Promise<boolean> {
       actualWmm: maxX - minX,
       actualHmm: maxY - minY,
     };
+    const mask = s.artwork ? masks.get(s.imageId) ?? null : null;
     return {
       id: uid(),
       fileName: s.artwork ? `${label} #${i + 1}` : `${label} shape #${i + 1}`,
       imageDataUrl: s.artwork ? imageUrls.get(s.imageId)! : NO_ARTWORK,
-      raw: null,
+      raw: mask?.raw ?? null,
       artworkAspect: s.imageRect.width / s.imageRect.height,
       widthMm: base.actualWmm,
       heightMm: base.actualHmm,
@@ -1092,7 +1103,7 @@ async function importStudio3(file: File): Promise<boolean> {
       marginMm: state.marginMm,
       preserveSharpCorners: state.preserveSharpCorners,
       design: null,
-      imported: { base, studio3Index: i },
+      imported: { base, studio3Index: i, artWidthMm: mask ? mask.artWidthFraction * s.imageRect.width : null, traced: false },
       pinned: { x: minX, y: minY },
     };
   });
@@ -1146,8 +1157,9 @@ async function exportStudio3() {
   for (const p of state.lastPlacements) {
     const d = state.designs.find((dd) => dd.id === p.id);
     if (!d?.design) continue;
-    // A sticker from the file is written back into its own record; any other is added.
-    if (source && d.imported && d.pinned && !written.has(d.id)) {
+    // A sticker from the file is written back into its own record; any other is added, as is
+    // one whose outline has been re-traced (its record can only be moved and resized).
+    if (source && d.imported && !d.imported.traced && d.pinned && !written.has(d.id)) {
       written.add(d.id);
       placements.push({
         index: d.imported.studio3Index,
@@ -1168,7 +1180,9 @@ async function exportStudio3() {
       let image = images.get(key);
       if (!image) {
         const { width, height } = d.design!.imagePlacementMM;
-        image = renderArtworkPng(d.imageDataUrl, adjust, width, height, rotated);
+        // Artwork that came from the file goes back as it was: baking the colour adjustment in
+        // again would apply it twice to art this app exported, adjusted, in the first place.
+        image = renderArtworkPng(d.imageDataUrl, d.imported ? NO_COLOR_ADJUST : adjust, width, height, rotated);
         images.set(key, image);
       }
       return image;
@@ -1317,11 +1331,25 @@ sheetSelect.addEventListener("change", () => {
   recompute();
 });
 
+/**
+ * Switches an imported sticker from the outline in its file to one traced from its artwork, as
+ * an upload's is, keeping the artwork the size it was.
+ */
+function startTracing(d: StickerDesign) {
+  if (!d.imported || d.imported.traced || !d.raw || d.imported.artWidthMm === null) return;
+  d.imported.traced = true;
+  d.widthMm = d.imported.artWidthMm * (d.widthMm / d.imported.base.actualWmm) + 2 * d.marginMm;
+  d.driveBy = "width";
+}
+
 // Margin and sharp corners apply to the selected sticker, and become the default for new ones.
 function setMarginMm(mm: number) {
   state.marginMm = Math.round(mm * 10) / 10; // same 0.1 mm steps as the slider
   const sel = selectedDesign();
-  if (sel) sel.marginMm = state.marginMm;
+  if (sel) {
+    sel.marginMm = state.marginMm;
+    startTracing(sel);
+  }
   recompute();
 }
 
@@ -1342,7 +1370,10 @@ marginInput.addEventListener("blur", syncMarginInput);
 sharpCornersToggle.addEventListener("change", () => {
   state.preserveSharpCorners = sharpCornersToggle.checked;
   const sel = selectedDesign();
-  if (sel) sel.preserveSharpCorners = state.preserveSharpCorners;
+  if (sel) {
+    sel.preserveSharpCorners = state.preserveSharpCorners;
+    startTracing(sel);
+  }
   recompute();
 });
 
