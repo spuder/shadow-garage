@@ -181,6 +181,7 @@ const summaryEl = document.getElementById("summary") as HTMLDivElement;
 const downloadSvgBtn = document.getElementById("downloadSvgBtn") as HTMLButtonElement;
 const printBtn = document.getElementById("printBtn") as HTMLButtonElement;
 const printCutLinesToggle = document.getElementById("printCutLinesToggle") as HTMLInputElement;
+const marksTipEl = document.getElementById("marksTip") as HTMLDivElement;
 const sendToCutterBtn = document.getElementById("sendToCutterBtn") as HTMLButtonElement;
 const cutterStatusEl = document.getElementById("cutterStatus") as HTMLDivElement;
 const cutterConnectBtn = document.getElementById("cutterConnectBtn") as HTMLButtonElement;
@@ -475,6 +476,10 @@ function render() {
   });
   rotateToggle.checked = state.allowRotation;
   regmarksToggle.checked = state.regmarksEnabled;
+  // Foil and film stocks: say how to make the marks readable before the sheet is printed.
+  const marksTip = state.regmarksEnabled ? currentPaperType().marksTip : undefined;
+  marksTipEl.hidden = !marksTip;
+  marksTipEl.textContent = marksTip ?? "";
   regmarkStyleToggle.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("active", (b as HTMLButtonElement).dataset.style === state.regmarkStyle);
   });
@@ -1776,6 +1781,8 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
     const cancelledOnCutter = e instanceof CutterCancelledError;
     c.statusText = controller.signal.aborted ? "Aborted" : cancelledOnCutter ? "Cancelled on the cutter — nothing more was sent" : null;
     if (!controller.signal.aborted && !cancelledOnCutter) c.error = errorText(e);
+    const marksTip = currentPaperType().marksTip;
+    if (e instanceof RegmarkNotFoundError && marksTip) c.error += ` ${marksTip}`;
     if (e instanceof RegmarkNotFoundError && registration === "auto") {
       c.manualRetryKind = kind;
       c.manualRetryDryRun = dryRun;

@@ -110,6 +110,16 @@ a cut but stays a few minutes even for a full sheet.
 the cutter's buffer, and it hasn't been confirmed that the reset stops the blade mid-cut. **If the
 cutter is doing something wrong, switch it off.**
 
+### Holographic and clear sheets
+
+The cutter's sensor looks for matte black on something that doesn't reflect. Inkjet ink is
+see-through on holographic foil and clear film, so on those stocks the sensor sees shine (or the
+mat through the film) and the mark search fails. Before printing, stick matte white label paper or
+masking tape over the three corners where the marks print, about 30 mm in from each edge, and keep
+it flat. The marks then print on the patches and the cutter finds them as usual. The app shows this
+tip under **Print** when one of those paper types is selected. Room lighting doesn't matter, as long
+as no strong light (sunlight, a lamp) shines straight into the machine.
+
 ### If the marks still aren't found: manual registration (experimental)
 
 After a failed scan, **Try manual registration** appears. Use the arrow pad (1 mm or 5 mm steps) to

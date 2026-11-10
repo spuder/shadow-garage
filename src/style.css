@@ -519,6 +519,13 @@ select {
   color: var(--text-muted);
   line-height: 1.4;
 }
+/* What to do before printing on stock the cutter can't read marks on (holographic, clear). */
+.marks-tip {
+  margin-top: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--accent);
+  color: var(--text);
+}
 
 .segmented {
   display: flex;

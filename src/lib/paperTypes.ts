@@ -16,7 +16,16 @@ export interface PaperType {
    * is translucent with no white ink, so foil/film stocks need darker, more saturated artwork.
    */
   colorAdjust?: ColorAdjust;
+  /**
+   * Set when the cutter's optical sensor usually can't read registration marks printed on this
+   * stock: ink is see-through on foil and film, so the sensor sees shine (or the mat) rather than
+   * matte black. The text is shown under Print, and added to a failed mark search's message.
+   */
+  marksTip?: string;
 }
+
+const MATTE_PATCH_TIP =
+  "Before printing, stick matte white label paper or masking tape over the three corners where the registration marks print (about 30 mm in from each edge), so the marks print on something the cutter can see. Or, after a failed mark search, try manual registration.";
 
 /**
  * Holographic starting point. Pale tints at 60 plus brightness -10 take a near-white like #f2f0e5
@@ -40,6 +49,7 @@ export const PAPER_TYPES: PaperType[] = [
     exportColor: "transparent",
     showBorder: false,
     cutMaterial: STICKER_PAPER,
+    marksTip: `The cutter usually can't see registration marks printed on clear film. ${MATTE_PATCH_TIP}`,
   },
   {
     id: "holographic",
@@ -50,6 +60,7 @@ export const PAPER_TYPES: PaperType[] = [
     showBorder: false,
     cutMaterial: STICKER_PAPER,
     colorAdjust: HOLOGRAPHIC_COLOR_ADJUST,
+    marksTip: `The cutter usually can't see registration marks printed on holographic foil. ${MATTE_PATCH_TIP}`,
   },
   {
     id: "printer-paper-20lb",
