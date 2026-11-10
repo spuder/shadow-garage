@@ -1785,7 +1785,10 @@ function renderCutter() {
   cutterErrorEl.hidden = !c.error;
   cutterErrorEl.textContent = c.error ?? "";
 
-  sendToCutterBtn.textContent = c.job ? "Abort" : "Send to Cutter";
+  // While a job runs this is the stop button: bright red with a white ✕, so it can't be missed.
+  // (A 🛑 emoji is itself red and all but vanishes on the red button.)
+  sendToCutterBtn.textContent = c.job ? "✕  Abort" : "Send to Cutter";
+  sendToCutterBtn.classList.toggle("btn-abort", !!c.job);
   sendToCutterBtn.disabled = c.busyOp || (!c.job && (!c.session || state.designs.length === 0));
 }
 
