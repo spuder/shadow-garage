@@ -54,6 +54,13 @@ export interface CutterModel {
    * the sheet (mm, relative to the first attempt), one attempt per entry.
    */
   regmarkSearchStepsMm: number[];
+  /**
+   * Whether to retry the mark search after the cutter answered that it didn't find the marks. A
+   * search that gets no answer is always retried. On a Cameo 3 a failed search leaves a
+   * registration error on its screen that wants the mat unloaded; a retry was then answered
+   * "found" with the error still showing, and the sheet was cut anyway.
+   */
+  retryAfterMissedMarks: boolean;
   pressureRange: [number, number];
   speedRange: [number, number];
   toolHolders: number;
@@ -87,6 +94,7 @@ export const CUTTER_MODELS: CutterModel[] = [
     regmarkScanOffsetMm: 3,
     regmarkSearchMarginMm: 10,
     regmarkSearchStepsMm: [0, 2, 4, 6],
+    retryAfterMissedMarks: false,
     pressureRange: [1, 33],
     speedRange: [1, 10],
     toolHolders: 2,
@@ -113,6 +121,9 @@ export const CUTTER_MODELS: CutterModel[] = [
     regmarkScanOffsetMm: 6,
     regmarkSearchMarginMm: 0,
     regmarkSearchStepsMm: [0, 2, 4, 6],
+    // A Cameo 4 answers -1 after measuring the square when the search starts on or above it, and a
+    // retry lower down finds it (tuned on hardware), so it keeps retrying.
+    retryAfterMissedMarks: true,
     pressureRange: [1, 33],
     speedRange: [1, 30],
     toolHolders: 2,
