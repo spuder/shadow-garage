@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { flatten, movedShapeParams, parseStudio3, Studio3Error, writeStudio3, type PathPoint, type Studio3Document, type Studio3Placement } from "./studio3";
+import type { Contour } from "./geometry";
+import { flatten, movedShapeParams, parseStudio3, Studio3Error, writeStudio3, type PathPoint, type Studio3Document, type Studio3NewSticker, type Studio3Placement } from "./studio3";
 import fixtureDataUrl from "./fixtures/six-stickers.studio3?inline";
+import templateDataUrl from "./studio3Template.studio3?inline";
 
 // A file saved by Silhouette Studio 5.0.539: six copies of one traced sticker on a Letter page.
 // The artwork and thumbnail were swapped for flat placeholders and the cached cut job (sections 5
 // and 6) emptied; the document itself is byte for byte what Studio wrote.
-const fixture = Uint8Array.from(atob(fixtureDataUrl.slice(fixtureDataUrl.indexOf(",") + 1)), (c) => c.charCodeAt(0));
+const fromDataUrl = (url: string) => Uint8Array.from(atob(url.slice(url.indexOf(",") + 1)), (c) => c.charCodeAt(0));
+const fixture = fromDataUrl(fixtureDataUrl);
+const template = fromDataUrl(templateDataUrl);
 
 function inPlace(doc: Studio3Document): Studio3Placement[] {
   return doc.stickers.map((s, index) => ({ index, x: s.bbox.minX, y: s.bbox.minY, scaleX: 1, scaleY: 1 }));
@@ -144,6 +148,116 @@ describe("writeStudio3", () => {
     expect(() => writeStudio3(doc, [{ index: 6, x: 0, y: 0, scaleX: 1, scaleY: 1 }])).toThrow(Studio3Error);
     const [first] = inPlace(doc);
     expect(() => writeStudio3(doc, [first, first])).toThrow(Studio3Error);
+  });
+});
+
+describe("writeStudio3 adding stickers", () => {
+  const doc = parseStudio3(fixture);
+  const image = [...doc.images.values()][0];
+  // An oval cut line 2 mm outside artwork placed at (x, y), w mm wide.
+  const added = (x: number, y: number, w: number, name: string): Studio3NewSticker => {
+    const h = (w * image.heightPx) / image.widthPx;
+    const contour: Contour = Array.from({ length: 48 }, (_, i) => {
+      const a = (i / 48) * 2 * Math.PI;
+      return [x + w / 2 + (w / 2 + 2) * Math.cos(a), y + h / 2 + (h / 2 + 2) * Math.sin(a)];
+    });
+    return { name, image: { bytes: image.bytes, widthPx: image.widthPx, heightPx: image.heightPx }, imageRect: { x, y, width: w, height: h }, contours: [contour] };
+  };
+
+  it("adds stickers after the file's own, with their artwork, and keeps the rest readable", () => {
+    const written = writeStudio3(doc, inPlace(doc), { add: [added(30, 200, 40, "Added A"), added(120, 210, 30, "Added B")] });
+    const again = parseStudio3(written);
+    expect(again.stickers.slice(0, 6)).toEqual(doc.stickers);
+    expect(again.stickers.map((s) => s.name).slice(6)).toEqual(["Added A", "Added B"]);
+    expect(again.images.size).toBe(3);
+    expect(again.pageWidthMm).toBeCloseTo(215.9, 3);
+
+    const a = again.stickers[6];
+    expect(a.artwork).toBe(true);
+    expect(a.imageId).not.toBe(image.id);
+    expect(again.images.get(a.imageId)!.bytes).toEqual(image.bytes);
+    expect(a.imageRect.x).toBeCloseTo(30, 4);
+    expect(a.imageRect.y).toBeCloseTo(200, 4);
+    expect(a.imageRect.width).toBeCloseTo(40, 4);
+    expect(a.bbox.minX).toBeCloseTo(28, 3);
+    expect(a.bbox.maxX).toBeCloseTo(72, 3);
+    expect(a.contours[0]).toHaveLength(48);
+  });
+
+  it("adds stickers while deleting all of the file's own", () => {
+    const again = parseStudio3(writeStudio3(doc, [], { add: [added(20, 20, 50, "Only")] }));
+    expect(again.stickers.map((s) => s.name)).toEqual(["Only"]);
+    expect(again.stickers[0].bbox.minX).toBeCloseTo(18, 3);
+  });
+
+  it("gives each new sticker its own serial number, above every one in the file", () => {
+    const written = writeStudio3(doc, inPlace(doc), { add: [added(30, 200, 40, "A"), added(120, 210, 30, "B")] });
+    const again = parseStudio3(written);
+    const view = new DataView(written.buffer);
+    const serial = (i: number) => {
+      const { block } = again.source.records[i];
+      // The serial follows the page outline, which is the last thing before it the reader located.
+      const at = again.source.records[i].matrixAt + 65;
+      const pathEnd = at + 1 + view.getUint32(at + 1, true);
+      expect(written[pathEnd]).toBe(1);
+      expect(pathEnd + 9).toBeLessThan(block.end);
+      return Number(view.getBigUint64(pathEnd + 1, true));
+    };
+    const old = Math.max(...[0, 1, 2, 3, 4, 5].map(serial));
+    expect(serial(6)).toBeGreaterThan(old);
+    expect(serial(7)).toBe(serial(6) + 1);
+  });
+
+  it("refuses a sticker with no outline", () => {
+    expect(() => writeStudio3(doc, inPlace(doc), { add: [{ ...added(30, 200, 40, "Empty"), contours: [] }] })).toThrow(Studio3Error);
+  });
+
+  it("stores an image once for every sticker that shares it", () => {
+    const a = added(30, 200, 40, "A");
+    const b = { ...added(120, 210, 40, "B"), image: a.image };
+    const again = parseStudio3(writeStudio3(doc, [], { add: [a, b, added(60, 120, 40, "C")] }));
+    expect(again.images.size).toBe(3); // the file's own, A and B's, and C's
+    expect(again.stickers[0].imageId).toBe(again.stickers[1].imageId);
+    expect(again.stickers[2].imageId).not.toBe(again.stickers[0].imageId);
+  });
+
+  it("copies new stickers from a template when the file has none with artwork", () => {
+    const bytes = fixture.slice();
+    const at = bytes.findIndex((_, i) => bytes[i] === 0x89 && bytes[i + 1] === 0x50 && bytes[i + 2] === 0x4e && bytes[i + 3] === 0x47);
+    bytes[at] = 0x00; // the stored artwork is no longer a PNG, so the file has no sticker the reader can use
+    const noArt = parseStudio3(bytes);
+    expect(() => writeStudio3(noArt, [], { add: [added(30, 30, 40, "A")] })).toThrow(Studio3Error);
+    const again = parseStudio3(writeStudio3(noArt, [], { add: [added(30, 30, 40, "A")], template: parseStudio3(template) }));
+    expect(again.stickers.map((s) => s.name)).toEqual(["A"]);
+    expect(again.skippedShapes).toBe(6); // the file's own objects are kept
+  });
+});
+
+describe("the template for a new file", () => {
+  // studio3Template.studio3 is the fixture with all but its first sticker deleted and its artwork
+  // swapped for a 1x1 PNG. Exporting a sheet that didn't come from a file starts from it.
+  const doc = parseStudio3(template);
+
+  it("has one sticker with artwork to copy, on a Letter page", () => {
+    expect(doc.stickers).toHaveLength(1);
+    expect(doc.stickers[0].artwork).toBe(true);
+    expect(doc.images.size).toBe(1);
+    expect(doc.pageWidthMm).toBeCloseTo(215.9, 3);
+  });
+
+  it("becomes a file holding only the new stickers", () => {
+    const image = { bytes: [...parseStudio3(fixture).images.values()][0].bytes, widthPx: 1448, heightPx: 1086 };
+    const contour: Contour = [
+      [20, 20],
+      [80, 20],
+      [80, 70],
+      [20, 70],
+    ];
+    const sticker: Studio3NewSticker = { name: "New", image, imageRect: { x: 22, y: 22, width: 56, height: 42 }, contours: [contour] };
+    const again = parseStudio3(writeStudio3(doc, [], { add: [sticker, { ...sticker, name: "Copy" }] }));
+    expect(again.stickers.map((s) => s.name)).toEqual(["New", "Copy"]);
+    expect(again.stickers[0].bbox).toEqual({ minX: 20, minY: 20, maxX: 80, maxY: 70 });
+    expect(again.images.size).toBe(2); // the template's own 1x1 image stays behind, unused
   });
 });
 

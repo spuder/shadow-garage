@@ -46,8 +46,13 @@ step. Vite's `base` is `/shadow-garage/`, so the dev URL is
   format is undocumented; the file's header comment is the only description of it, so keep that
   comment in step with the code. Writing patches the imported bytes in place (move, resize) or
   cuts records out (delete) and passes everything else through, which is why an unchanged export
-  is byte-identical. It cannot build a file from scratch. `studio3.test.ts` runs against
-  `fixtures/six-stickers.studio3`, a real Studio 5 document with placeholder artwork.
+  is byte-identical. New stickers (`writeStudio3`'s `add` option) are copies of an existing
+  sticker record with their own image, outlines and placement. A sheet that didn't come from a
+  file is written into `studio3Template.studio3` (the fixture cut to one sticker, loaded with
+  `?url` at export time); `studio3Artwork.ts` renders each sticker's PNG. The page size and
+  Studio's registration-mark setting aren't written: the user sets them in Studio.
+  `studio3.test.ts` runs against `fixtures/six-stickers.studio3`, a real Studio 5 document with
+  placeholder artwork.
 
 **Imported stickers** (`StickerDesign.imported` / `.pinned` in `main.ts`) keep the outline from
 their file instead of being traced (`scaleDesign()` in `design.ts` resizes it), and are *pinned*:
