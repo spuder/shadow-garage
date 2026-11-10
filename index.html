@@ -98,6 +98,10 @@
             <div class="panel-block">
               <div class="block-title">Paper Type</div>
               <div id="paperTypeGrid" class="paper-type-grid"></div>
+              <label class="checkbox-row">
+                <input id="laminatedToggle" type="checkbox" />
+                <span>Laminated <span class="block-title-note">— a clear overlay on top: the blade cuts one step deeper</span></span>
+              </label>
             </div>
 
             <div class="panel-block">
@@ -185,6 +189,11 @@
                 Pressure: <span id="cutPressureValue">1</span> <span id="cutPressureDefault" class="cutter-speed-default"></span>
                 <input id="cutPressureSlider" type="range" min="1" max="33" step="1" value="1" />
               </label>
+              <label class="field-label cutter-speed">
+                Blade depth: <span id="cutDepthValue">1</span> <span id="cutDepthDefault" class="cutter-speed-default"></span>
+                <input id="cutDepthSlider" type="range" min="1" max="10" step="1" value="1" />
+              </label>
+              <div class="hint-text">Blade depth is how far the AutoBlade sticks out, set by its taps on the left of the deck at the start of each job: thicker stock (holographic, laminated) needs more. Pressure is how hard it pushes. Raise depth for a thicker sheet, and keep pressure as low as cuts cleanly.</div>
               <div class="cutter-buttons">
                 <button id="cutterConnectBtn" class="btn-secondary small">Connect…</button>
                 <button id="cutterHomeBtn" class="btn-secondary small" disabled hidden>Home</button>

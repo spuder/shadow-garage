@@ -122,7 +122,7 @@ hardware evidence:
   `timeoutMs` with no progress (moving or paused resets it); one packet of a slow cut can take
   well over a minute.
 - Excess blade pressure drags the mat and makes it skip, even when a dry run of the same sheet is
-  clean. Prefer the lowest pressure that cuts through; the Pressure/Speed sliders override
+  clean. Prefer the lowest pressure that cuts through; the Pressure/Speed/Blade depth sliders override
   `materials.ts` per job.
 
 ## Testing the cutter without hardware
