@@ -252,7 +252,13 @@ export class CutterSession {
         await this.protocol.searchRegmarks(spec, steps[i]);
         return;
       } catch (e) {
-        if (!(e instanceof RegmarkNotFoundError) || i === steps.length - 1) throw e;
+        if (!(e instanceof RegmarkNotFoundError)) throw e;
+        if (e.answered && !this.model.retryAfterMissedMarks) {
+          // The cutter now shows a registration error; anything sent before the mat is unloaded can't be trusted.
+          e.message += ` The cutter shows a registration error: unload the mat with the cutter's own button, then load it and send again.`;
+          throw e;
+        }
+        if (i === steps.length - 1) throw e;
         this.log.note(`mark search ${i + 1} failed: ${e.message}`);
       }
     }

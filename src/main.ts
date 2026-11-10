@@ -1789,6 +1789,7 @@ function renderCutter() {
   // (A 🛑 emoji is itself red and all but vanishes on the red button.)
   sendToCutterBtn.textContent = c.job ? "✕  Abort" : "Send to Cutter";
   sendToCutterBtn.classList.toggle("btn-abort", !!c.job);
+  sendToCutterBtn.title = c.job ? "Stops sending: the cutter finishes the outline it's cutting. Switch the cutter off to stop it at once." : "";
   sendToCutterBtn.disabled = c.busyOp || (!c.job && (!c.session || state.designs.length === 0));
 }
 
@@ -1975,7 +1976,12 @@ async function runCutterJob(kind: CutKind, registration: "auto" | "manual" = "au
     );
   } catch (e) {
     const cancelledOnCutter = e instanceof CutterCancelledError;
-    c.statusText = controller.signal.aborted ? "Aborted" : cancelledOnCutter ? "Cancelled on the cutter — nothing more was sent" : null;
+    // Abort only stops what hasn't been sent: the cutter finishes the outline it's on (sent one per packet).
+    c.statusText = controller.signal.aborted
+      ? "Aborted — the cutter finishes the outline it's cutting, then stops. To stop it at once, switch the cutter off."
+      : cancelledOnCutter
+        ? "Cancelled on the cutter — nothing more was sent"
+        : null;
     if (!controller.signal.aborted && !cancelledOnCutter) c.error = errorText(e);
     const marksTip = currentPaperType().marksTip;
     if (e instanceof RegmarkNotFoundError && marksTip) c.error += ` ${marksTip.summary} ${marksTip.detail}`;

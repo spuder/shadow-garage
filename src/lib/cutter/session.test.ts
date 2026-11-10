@@ -181,9 +181,12 @@ describe("dry run", () => {
 });
 
 describe("mark search retries", () => {
+  // The retry logic, on a model that retries after the cutter answers "not found" (as a Cameo 4 does).
+  const retrying = { ...cameo3, retryAfterMissedMarks: true };
+
   it("retries further down the sheet until the marks are found", async () => {
     const t = new FakeTransport(cameo3Responder({ regmarkReply: [NOT_FOUND, NOT_FOUND, FOUND] }));
-    const session = await CutterSession.open(t, cameo3);
+    const session = await CutterSession.open(t, retrying);
     const attempts: [number, number, number][] = [];
     await session.run(job(true), { onRegmarkAttempt: (n, of, mm) => attempts.push([n, of, mm]) });
     expect(attempts).toEqual([
@@ -197,7 +200,7 @@ describe("mark search retries", () => {
 
   it("stops before cutting when every attempt fails", async () => {
     const t = new FakeTransport(cameo3Responder({ regmarkReply: NOT_FOUND }));
-    const session = await CutterSession.open(t, cameo3);
+    const session = await CutterSession.open(t, retrying);
     await expect(session.run(job(true))).rejects.toThrow(RegmarkNotFoundError);
     expect(searchTops(t.log)).toEqual([60, 100, 140, 180]);
     expect(t.log.some((c) => c.startsWith("M600"))).toBe(false);
@@ -226,16 +229,28 @@ describe("mark search retries", () => {
 
   it("still reports a real failure that follows movement events", async () => {
     const t = new FakeTransport(cameo3Responder({ regmarkReply: ["1\x03" + NOT_FOUND, "1\x030\x03" + FOUND] }));
-    const session = await CutterSession.open(t, cameo3);
+    const session = await CutterSession.open(t, retrying);
     const attempts: number[] = [];
     await session.run(job(true), { onRegmarkAttempt: (n) => attempts.push(n) });
     expect(attempts).toEqual([1, 2]);
     expect(searchTops(t.log)).toEqual([60, 100]);
   });
 
+  it("stops a Cameo 3 at the first answered miss, without retrying or cutting", async () => {
+    // A failed search leaves a registration error on a Cameo 3's screen; a retry was answered
+    // "found" with the error still showing, and the sheet was cut anyway.
+    const t = new FakeTransport(cameo3Responder({ regmarkReply: ["   -1\x03", FOUND] }));
+    const session = await CutterSession.open(t, cameo3);
+    const err = await session.run(job(true)).catch((e) => e);
+    expect(err).toBeInstanceOf(RegmarkNotFoundError);
+    expect(err.message).toMatch(/unload the mat/);
+    expect(searchTops(t.log)).toEqual([60]);
+    expect(t.log.some((c) => c.startsWith("M600"))).toBe(false);
+  });
+
   it("uses the model's retry positions", async () => {
     const t = new FakeTransport(cameo3Responder({ regmarkReply: NOT_FOUND }));
-    const session = await CutterSession.open(t, { ...cameo3, regmarkScanOffsetMm: 0, regmarkSearchStepsMm: [0, 1] });
+    const session = await CutterSession.open(t, { ...retrying, regmarkScanOffsetMm: 0, regmarkSearchStepsMm: [0, 1] });
     await expect(session.run(job(true))).rejects.toThrow(RegmarkNotFoundError);
     expect(searchTops(t.log)).toEqual([0, 20]);
   });
@@ -388,16 +403,28 @@ describe("cancel on the cutter", () => {
     await vi.advanceTimersByTimeAsync(5000);
     await settled;
     const log = t.log.filter((c) => c !== "<ESC ENQ>");
-    const packetStarts = log.filter((c, i) => c.startsWith("M") && log[i - 1]?.startsWith("D")).length;
+    const cutMoves = log.filter((c) => /^M\d/.test(c) && c !== "M0,0");
     expect(session.log.format()).toMatch(/## packet 1\/\d+ starts/);
     expect(session.log.format()).not.toMatch(/## packet 2\/\d+ starts/);
-    expect(packetStarts).toBeGreaterThan(0); // sanity: the first packet itself had several squares
+    expect(cutMoves).toHaveLength(1); // the first packet was one outline, and nothing after it
     expect(log).not.toContain("L0"); // no park either: the cutter is left alone
     expect(phases).not.toContain("done");
   });
 });
 
 describe("abort, log and diagnostics", () => {
+  it("sends one outline per packet, so Abort stops the cutter after the outline it's on", async () => {
+    // An ESC EOT doesn't stop a Cameo 3 working through a packet it already has: a small sheet sent
+    // as one packet couldn't be stopped from the app at all.
+    const t = new FakeTransport(cameo3Responder());
+    const session = await CutterSession.open(t, cameo3);
+    const paths = Array.from({ length: 6 }, (_, i) => testSquarePaths(40 + i * 12, 40, 5, 0)[0]);
+    await session.run({ ...job(false), paths });
+    const packets = t.writes.filter((w) => /^[MD]\d/.test(w) && !w.startsWith("M0,0"));
+    expect(packets).toHaveLength(6);
+    for (const p of packets) expect(p.split("\x03").filter((c) => c.startsWith("M")).length).toBe(1);
+  });
+
   it("logs where each packet of the cut starts", async () => {
     const t = new FakeTransport(cameo3Responder());
     const session = await CutterSession.open(t, cameo3);

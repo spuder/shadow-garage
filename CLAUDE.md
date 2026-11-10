@@ -108,6 +108,15 @@ hardware evidence:
   (`regmarkScanOffsetMm`, `regmarkSearchStepsMm`). Where it starts matters per model: started 10 mm
   above the square or on it, a Cameo 4 finds and measures the square but then fails (`-1`); just
   below it (`regmarkSearchMarginMm` 0, offset 6) works.
+- A Cameo 3 doesn't get retried after it answers that it missed the marks
+  (`retryAfterMissedMarks: false`): the miss leaves a registration error on its screen, a retry
+  was then answered "found" with the error still showing, and the sheet was cut. Only a search
+  with no answer is retried.
+- `ESC EOT` (what Abort sends) doesn't stop a Cameo 3 working through a packet it already has. The
+  cut is sent one outline per packet so Abort takes effect after the current outline; a small
+  sheet sent as one packet couldn't be stopped except by switching the cutter off.
+- Over Bluetooth LE a Cameo 3 sometimes sends bare `1`/`0` movement events on the reply stream;
+  the mark search skips them and waits for its padded result (`isMovementEvent`).
 - High speeds bind the carriage and cause layer shifts, so material speeds are deliberately low.
 - Status `3` means paused from the cutter's own screen. `waitForReady` only times out after
   `timeoutMs` with no progress (moving or paused resets it); one packet of a slow cut can take

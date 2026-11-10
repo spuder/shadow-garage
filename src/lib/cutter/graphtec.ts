@@ -372,7 +372,7 @@ export class GraphtecProtocol implements CutterProtocol {
       try {
         reply = await this.readReply(Math.max(1, deadline - Date.now()));
       } catch (e) {
-        if (e instanceof TransportTimeoutError) throw new RegmarkNotFoundError(`no reply within ${REGMARK_TIMEOUT_MS / 1000} s`);
+        if (e instanceof TransportTimeoutError) throw new RegmarkNotFoundError(`no reply within ${REGMARK_TIMEOUT_MS / 1000} s`, false);
         throw e;
       }
       if (isMovementEvent(reply)) continue;
@@ -417,7 +417,13 @@ export class GraphtecProtocol implements CutterProtocol {
       }
       return;
     }
-    const chunks = chunkFrames(frameCommands(pathCommands(paths, frame, bladeUp)));
+    // One outline per packet (a long one is split further). Abort only stops packets that haven't
+    // been sent yet: an ESC EOT doesn't stop a Cameo 3 working through the packet it already has.
+    // Sent as one packet, a small sheet couldn't be stopped at all.
+    const chunks = paths.flatMap((path) => {
+      const cmds = pathCommands([path], frame, bladeUp);
+      return cmds.length > 0 ? chunkFrames(frameCommands(cmds)) : [];
+    });
     for (let i = 0; i < chunks.length; i++) {
       signal?.throwIfAborted();
       onPacket?.(i + 1, chunks.length, decoder.decode(chunks[i].subarray(0, chunks[i].indexOf(ETX))));

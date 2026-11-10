@@ -106,9 +106,14 @@ outlines, don't cut. Stop the cutter and send the log. It sends one move at a ti
 drops long runs of queued moves) and simplifies each outline to within 1 mm, so it's slower than
 a cut but stays a few minutes even for a full sheet.
 
-**Abort** stops sending and sends the cutter a reset, but a small job is often already entirely in
-the cutter's buffer, and it hasn't been confirmed that the reset stops the blade mid-cut. **If the
-cutter is doing something wrong, switch it off.**
+**Abort** stops sending and sends the cutter a reset, but on a Cameo 3 the reset doesn't stop the
+cutter working through what it has already been sent. Each outline is sent separately, so after
+Abort the cutter finishes the outline it's cutting and then stops. **If the cutter is doing
+something wrong, switch it off.**
+
+If a mark search fails, a Cameo 3 shows a registration error on its screen. The app stops there
+rather than retrying: unload the mat with the cutter's own button, fix the cause, load it and send
+again.
 
 ### Holographic and clear sheets
 

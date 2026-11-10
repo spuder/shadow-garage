@@ -94,11 +94,14 @@ export class CutterCancelledError extends Error {
 }
 
 export class RegmarkNotFoundError extends Error {
-  constructor(detail: string) {
+  /** True when the cutter answered that it didn't find the marks; false when it didn't answer at all. */
+  readonly answered: boolean;
+  constructor(detail: string, answered = true) {
     super(
       `The cutter couldn't find the registration marks (${detail}). Check: the sheet sits in the top-left corner of the mat grid and square to it; the mat is pushed against the left guide as it loads; the marks printed solid matte black. Then send again.`
     );
     this.name = "RegmarkNotFoundError";
+    this.answered = answered;
   }
 }
 
